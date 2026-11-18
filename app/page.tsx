@@ -2,8 +2,22 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { getClientFirebaseAuth } from "@/lib/firebase-client";
 
 function messageFor(error: unknown) {
+  if (error instanceof Error && "code" in error) {
+    const code = String(error.code);
+    if (["auth/invalid-credential", "auth/user-not-found", "auth/wrong-password"].includes(code)) {
+      return "E-mail ou senha incorretos.";
+    }
+    if (code === "auth/operation-not-allowed") {
+      return "Ative o provedor E-mail/senha em Firebase → Authentication → Sign-in method.";
+    }
+    if (code === "auth/too-many-requests") {
+      return "Muitas tentativas. Aguarde um pouco e tente novamente.";
+    }
+  }
   return error instanceof Error ? error.message : "Não foi possível entrar. Tente novamente.";
 }
 
@@ -19,10 +33,28 @@ export default function HomePage() {
     setError("");
     setBusy(true);
     try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const bootstrapResponse = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "bootstrap", email: normalizedEmail, password }),
+      });
+      if (bootstrapResponse.ok) {
+        await signInWithEmailAndPassword(getClientFirebaseAuth(), normalizedEmail, password);
+        router.push("/painel");
+        return;
+      }
+      if (bootstrapResponse.status !== 403 && bootstrapResponse.status !== 409) {
+        const data = (await bootstrapResponse.json()) as { error?: string };
+        throw new Error(data.error ?? "Não foi possível preparar o primeiro acesso.");
+      }
+
+      const credential = await signInWithEmailAndPassword(getClientFirebaseAuth(), normalizedEmail, password);
+      const idToken = await credential.user.getIdToken();
       const response = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "login", email: email.trim(), password }),
+        body: JSON.stringify({ action: "login", idToken }),
       });
       if (!response.ok) {
         const data = (await response.json()) as { error?: string };

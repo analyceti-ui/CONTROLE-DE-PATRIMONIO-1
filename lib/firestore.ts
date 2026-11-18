@@ -1,11 +1,14 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth, type Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { ApiError } from "@/lib/errors";
 
 let firestore: Firestore | undefined;
+let firebaseAuth: Auth | undefined;
 
-export function getFirestoreDb() {
-  if (firestore) return firestore;
+function getAdminApp() {
+  const existing = getApps()[0];
+  if (existing) return existing;
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -15,12 +18,23 @@ export function getFirestoreDb() {
       "Firebase não está configurado. Defina FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL e FIREBASE_PRIVATE_KEY nas variáveis de ambiente.",
     );
   }
-  const app = getApps()[0] ?? initializeApp({
+  return initializeApp({
     credential: cert({ projectId, clientEmail, privateKey }),
     projectId,
   });
+}
+
+export function getFirestoreDb() {
+  if (firestore) return firestore;
+  const app = getAdminApp();
   firestore = getFirestore(app);
   return firestore;
+}
+
+export function getFirebaseAuth() {
+  if (firebaseAuth) return firebaseAuth;
+  firebaseAuth = getAuth(getAdminApp());
+  return firebaseAuth;
 }
 
 export type RecordData = Record<string, unknown> & { id: string };

@@ -1,8 +1,9 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   deleteRecord,
   deleteRecords,
+  getFirebaseAuth,
   getRecord,
   getFirestoreDb,
   listRecords,
@@ -24,20 +25,6 @@ export type SessionUser = {
   mustChangePassword: boolean;
 };
 export type User = SessionUser & { createdAt: string };
-
-export function hashPassword(password: string) {
-  const salt = randomBytes(16);
-  const derivedKey = scryptSync(password, salt, 64);
-  return `scrypt:${salt.toString("hex")}:${derivedKey.toString("hex")}`;
-}
-
-export function verifyPassword(password: string, storedHash: string) {
-  const [algorithm, saltHex, keyHex] = storedHash.split(":");
-  if (algorithm !== "scrypt" || !saltHex || !keyHex) return false;
-  const expected = Buffer.from(keyHex, "hex");
-  const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
 
 export function createId() {
   return randomUUID();
@@ -199,6 +186,16 @@ export function handleApiError(error: unknown) {
   if (error instanceof ApiError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
+  if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
+    const firebaseErrors: Record<string, { status: number; message: string }> = {
+      "auth/email-already-exists": { status: 409, message: "Já existe uma conta com este e-mail no Firebase Authentication." },
+      "auth/invalid-email": { status: 400, message: "Informe um e-mail válido." },
+      "auth/weak-password": { status: 400, message: "A senha deve ter pelo menos 8 caracteres." },
+      "auth/user-not-found": { status: 404, message: "Usuário não encontrado no Firebase Authentication." },
+    };
+    const knownError = firebaseErrors[error.code];
+    if (knownError) return NextResponse.json({ error: knownError.message }, { status: knownError.status });
+  }
   console.error("Erro inesperado na API:", error);
   return NextResponse.json({ error: "Não foi possível concluir a operação." }, { status: 500 });
 }
@@ -214,4 +211,4 @@ export async function getOrganizationRecords<T extends RecordData = RecordData>(
   return listRecords<T>(collection, { organization_id: organizationId });
 }
 
-export { deleteRecord, deleteRecords, getRecord, getFirestoreDb, listRecords, nowIso, setRecord };
+export { deleteRecord, deleteRecords, getFirebaseAuth, getRecord, getFirestoreDb, listRecords, nowIso, setRecord };

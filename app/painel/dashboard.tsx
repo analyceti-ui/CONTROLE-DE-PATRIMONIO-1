@@ -4,7 +4,9 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { EmailAuthProvider, reauthenticateWithCredential, signOut, updatePassword } from "firebase/auth";
 import type { UserRole } from "@/lib/api";
+import { getClientFirebaseAuth } from "@/lib/firebase-client";
 
 type Asset = {
   id: string;
@@ -1142,9 +1144,15 @@ export default function DashboardPage({ section }: { section: string }) {
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
+      const auth = getClientFirebaseAuth();
+      const firebaseUser = auth.currentUser;
+      if (!firebaseUser?.email) throw new Error("Sua sessão do Firebase expirou. Entre novamente.");
+      const credential = EmailAuthProvider.credential(firebaseUser.email, passwordForm.currentPassword);
+      await reauthenticateWithCredential(firebaseUser, credential);
+      await updatePassword(firebaseUser, passwordForm.newPassword);
       await responseData(await api("/api/users", {
         method: "PATCH",
-        body: JSON.stringify(passwordForm),
+        body: JSON.stringify({ newPassword: passwordForm.newPassword }),
       }));
       setPasswordForm({ currentPassword: "", newPassword: "" });
       await logout();
@@ -1246,6 +1254,7 @@ export default function DashboardPage({ section }: { section: string }) {
 
   async function logout() {
     await api("/api/auth", { method: "DELETE" });
+    await signOut(getClientFirebaseAuth());
     router.replace("/");
   }
 
