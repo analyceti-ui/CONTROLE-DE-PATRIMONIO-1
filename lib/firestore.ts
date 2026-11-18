@@ -11,7 +11,16 @@ function getAdminApp() {
   if (existing) return existing;
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
+  if (privateKey?.startsWith('"') && privateKey.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(privateKey);
+      if (typeof parsed === "string") privateKey = parsed;
+    } catch {
+      privateKey = privateKey.slice(1, -1);
+    }
+  }
+  privateKey = privateKey?.replace(/\\n/g, "\n").trim();
   if (!projectId || !clientEmail || !privateKey) {
     throw new ApiError(
       503,
