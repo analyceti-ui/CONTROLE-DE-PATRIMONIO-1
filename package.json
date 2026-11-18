@@ -1,0 +1,34 @@
+{
+  "name": "gestao-patrimonial",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint app lib scripts/migrate-sqlite-to-cloud.mjs",
+    "typecheck": "tsc --noEmit",
+    "migrate:cloud": "node --env-file=.env.local scripts/migrate-sqlite-to-cloud.mjs"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "cloudinary": "^2.11.0",
+    "firebase-admin": "^14.5.1",
+    "next": "^15.5.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.0",
+    "typescript": "^5.8.3"
+  }
+}
