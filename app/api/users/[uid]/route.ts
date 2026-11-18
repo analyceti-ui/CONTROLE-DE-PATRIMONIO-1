@@ -28,7 +28,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       throw new ApiError(400, "Informe uma nova senha válida.");
     }
 
-    const firebaseAuth = getFirebaseAuth();
+    const firebaseAuth = await getFirebaseAuth();
     let firebaseUid = typeof target.auth_uid === "string" ? target.auth_uid : "";
     if (!firebaseUid) {
       try {

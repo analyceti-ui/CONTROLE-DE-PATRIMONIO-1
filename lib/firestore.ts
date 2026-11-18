@@ -1,5 +1,5 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getAuth, type Auth } from "firebase-admin/auth";
+import type { Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { ApiError } from "@/lib/errors";
 
@@ -31,8 +31,9 @@ export function getFirestoreDb() {
   return firestore;
 }
 
-export function getFirebaseAuth() {
+export async function getFirebaseAuth(): Promise<Auth> {
   if (firebaseAuth) return firebaseAuth;
+  const { getAuth } = await import("firebase-admin/auth");
   firebaseAuth = getAuth(getAdminApp());
   return firebaseAuth;
 }

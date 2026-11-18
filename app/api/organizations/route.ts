@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     if (password.length < 8 || password.length > 128) throw new ApiError(400, "A senha inicial deve ter entre 8 e 128 caracteres.");
     const db = getFirestoreDb();
     const id = randomUUID();
-    const firebaseAuth = getFirebaseAuth();
+    const firebaseAuth = await getFirebaseAuth();
     const firebaseUser = await firebaseAuth.createUser({ email, password, displayName: adminName });
     const adminId = firebaseUser.uid;
     const timestamp = new Date().toISOString();

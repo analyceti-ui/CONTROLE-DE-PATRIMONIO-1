@@ -101,7 +101,7 @@ async function issueSession(uid: string, email: string, password?: string) {
 export async function POST(request: Request) {
   try {
     const body = await readJson(request);
-    const auth = getFirebaseAuth();
+    const auth = await getFirebaseAuth();
 
     if (body.action === "bootstrap") {
       const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";

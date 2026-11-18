@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new ApiError(400, "Informe um e-mail válido.");
     if (password.length < 8 || password.length > 128) throw new ApiError(400, "A senha inicial deve ter entre 8 e 128 caracteres.");
     if (!role) throw new ApiError(400, "Selecione um perfil válido.");
-    const firebaseAuth = getFirebaseAuth();
+    const firebaseAuth = await getFirebaseAuth();
     const firebaseUser = await firebaseAuth.createUser({ email, password, displayName });
     try {
       await createUserRecord(firebaseUser.uid, email, {
@@ -44,7 +44,7 @@ export async function PATCH(request: Request) {
     const account = await getRecord("users", user.uid);
     if (!account) throw new ApiError(404, "Usuário não encontrado.");
     const authUid = String(account.auth_uid || account.id);
-    await getFirebaseAuth().updateUser(authUid, { password: newPassword });
+    await (await getFirebaseAuth()).updateUser(authUid, { password: newPassword });
     await getFirestoreDb().collection("users").doc(user.uid).update({
       must_change_password: false, updated_at: new Date().toISOString(),
     });
