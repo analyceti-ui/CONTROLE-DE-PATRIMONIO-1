@@ -1,9 +1,9 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual, randomUUID } from "node:crypto";
+import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { NextResponse } from "next/server";
 import {
   deleteRecord,
   deleteRecords,
-  getFirebaseAuth,
   getRecord,
   getFirestoreDb,
   listRecords,
@@ -25,6 +25,42 @@ export type SessionUser = {
   mustChangePassword: boolean;
 };
 export type User = SessionUser & { createdAt: string };
+
+export async function getFirebaseAuth() {
+  const { getAuth } = await import("firebase-admin/auth");
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
+  if (privateKey?.startsWith('"') && privateKey.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(privateKey);
+      if (typeof parsed === "string") privateKey = parsed;
+    } catch {}
+  }
+  privateKey = privateKey?.replace(/\\n/g, "\n");
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new ApiError(503, "Firebase não está configurado nas variáveis de ambiente.");
+  }
+  const app = getApps()[0] ?? initializeApp({
+    credential: cert({ projectId, clientEmail, privateKey }),
+    projectId,
+  });
+  return getAuth(app);
+}
+
+export function hashPassword(password: string) {
+  const salt = randomBytes(16);
+  const derivedKey = scryptSync(password, salt, 64);
+  return `scrypt:${salt.toString("hex")}:${derivedKey.toString("hex")}`;
+}
+
+export function verifyPassword(password: string, storedHash: string) {
+  const [algorithm, saltHex, keyHex] = storedHash.split(":");
+  if (algorithm !== "scrypt" || !saltHex || !keyHex) return false;
+  const expected = Buffer.from(keyHex, "hex");
+  const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 
 export function createId() {
   return randomUUID();
@@ -186,16 +222,6 @@ export function handleApiError(error: unknown) {
   if (error instanceof ApiError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
-  if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
-    const firebaseErrors: Record<string, { status: number; message: string }> = {
-      "auth/email-already-exists": { status: 409, message: "Já existe uma conta com este e-mail no Firebase Authentication." },
-      "auth/invalid-email": { status: 400, message: "Informe um e-mail válido." },
-      "auth/weak-password": { status: 400, message: "A senha deve ter pelo menos 8 caracteres." },
-      "auth/user-not-found": { status: 404, message: "Usuário não encontrado no Firebase Authentication." },
-    };
-    const knownError = firebaseErrors[error.code];
-    if (knownError) return NextResponse.json({ error: knownError.message }, { status: knownError.status });
-  }
   console.error("Erro inesperado na API:", error);
   return NextResponse.json({ error: "Não foi possível concluir a operação." }, { status: 500 });
 }
@@ -211,4 +237,4 @@ export async function getOrganizationRecords<T extends RecordData = RecordData>(
   return listRecords<T>(collection, { organization_id: organizationId });
 }
 
-export { deleteRecord, deleteRecords, getFirebaseAuth, getRecord, getFirestoreDb, listRecords, nowIso, setRecord };
+export { deleteRecord, deleteRecords, getRecord, getFirestoreDb, listRecords, nowIso, setRecord };
