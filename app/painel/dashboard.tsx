@@ -17,6 +17,8 @@ type Asset = {
   ownerUid: string;
   ownerEmail: string;
   ownerName: string;
+  sharedWithUids: string[];
+  sharedWithNames: string[];
   manufacturer: string;
   model: string;
   serialNumber: string;
@@ -45,6 +47,7 @@ type AssetEditForm = {
   warrantyUntil: string;
   vehicleKm: string;
   usageHours: string;
+  sharedWithUids: string[];
 };
 
 type Profile = { uid: string; email: string; displayName: string; role: UserRole; organizationId: string; mustChangePassword: boolean };
@@ -290,6 +293,7 @@ export default function DashboardPage({ section }: { section: string }) {
   });
   const [auditActionFilter, setAuditActionFilter] = useState("all");
   const [selectedQrAsset, setSelectedQrAsset] = useState<Asset | null>(null);
+  const [photoZoomUrl, setPhotoZoomUrl] = useState<string | null>(null);
   const [assetPhotos, setAssetPhotos] = useState<AssetPhoto[]>([]);
   const [assetTransfers, setAssetTransfers] = useState<AssetTransfer[]>([]);
   const [fuelRecords, setFuelRecords] = useState<VehicleFuelRecord[]>([]);
@@ -331,6 +335,7 @@ export default function DashboardPage({ section }: { section: string }) {
     status: "Em uso",
     nextMaintenance: "",
     ownerUid: "",
+    sharedWithUids: [] as string[],
     unitId: "",
     manufacturer: "",
     model: "",
@@ -787,6 +792,7 @@ export default function DashboardPage({ section }: { section: string }) {
         body: JSON.stringify({
           ...form,
           ownerUid: form.ownerUid || profile?.uid,
+          sharedWithUids: form.sharedWithUids,
           purchaseCost: Number(form.purchaseCost || 0),
           vehicleKm: form.vehicleKm === "" ? null : Number(form.vehicleKm),
           usageHours: form.usageHours === "" ? null : Number(form.usageHours),
@@ -799,7 +805,7 @@ export default function DashboardPage({ section }: { section: string }) {
         if (newAssetPhotoCaption.trim()) photoForm.set("caption", newAssetPhotoCaption.trim());
         await responseData(await api(`/api/assets/${createdAsset.id}/photos`, { method: "POST", body: photoForm }));
       }
-      setForm({ name: "", category: "Veículo", tag: "", location: "", status: "Em uso", nextMaintenance: "", ownerUid: "", unitId: "", manufacturer: "", model: "", serialNumber: "", purchaseDate: "", purchaseCost: "", warrantyUntil: "", vehicleKm: "", usageHours: "" });
+      setForm({ name: "", category: "Veículo", tag: "", location: "", status: "Em uso", nextMaintenance: "", ownerUid: "", sharedWithUids: [], unitId: "", manufacturer: "", model: "", serialNumber: "", purchaseDate: "", purchaseCost: "", warrantyUntil: "", vehicleKm: "", usageHours: "" });
       setNewAssetPhotoFiles([]);
       setNewAssetPhotoCaption("");
       setNewAssetOpen(false);
@@ -810,7 +816,7 @@ export default function DashboardPage({ section }: { section: string }) {
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : "Não foi possível cadastrar o ativo.";
       if (createdAssetId) {
-        setForm({ name: "", category: "Veículo", tag: "", location: "", status: "Em uso", nextMaintenance: "", ownerUid: "", unitId: "", manufacturer: "", model: "", serialNumber: "", purchaseDate: "", purchaseCost: "", warrantyUntil: "", vehicleKm: "", usageHours: "" });
+        setForm({ name: "", category: "Veículo", tag: "", location: "", status: "Em uso", nextMaintenance: "", ownerUid: "", sharedWithUids: [], unitId: "", manufacturer: "", model: "", serialNumber: "", purchaseDate: "", purchaseCost: "", warrantyUntil: "", vehicleKm: "", usageHours: "" });
         setNewAssetPhotoFiles([]);
         setNewAssetPhotoCaption("");
         setNewAssetOpen(false);
@@ -913,6 +919,7 @@ export default function DashboardPage({ section }: { section: string }) {
       warrantyUntil: asset.warrantyUntil,
       vehicleKm: asset.vehicleKm === null ? "" : String(asset.vehicleKm),
       usageHours: asset.usageHours === null ? "" : String(asset.usageHours),
+      sharedWithUids: asset.sharedWithUids ?? [],
     });
     setError("");
     setEditingAsset(true);
@@ -924,7 +931,7 @@ export default function DashboardPage({ section }: { section: string }) {
     setBusy(true);
     setError("");
     setNotice("");
-    const { unitId, purchaseDate, purchaseCost, warrantyUntil, ...editableFields } = assetEditForm;
+    const { unitId, purchaseDate, purchaseCost, warrantyUntil, sharedWithUids, ...editableFields } = assetEditForm;
     const changes = {
       ...editableFields,
       ...(profile?.role === "admin" ? {
@@ -932,6 +939,7 @@ export default function DashboardPage({ section }: { section: string }) {
         purchaseDate,
         purchaseCost: Number(purchaseCost || 0),
         warrantyUntil,
+        sharedWithUids,
       } : {}),
       vehicleKm: assetEditForm.vehicleKm === "" ? null : Number(assetEditForm.vehicleKm),
       usageHours: assetEditForm.usageHours === "" ? null : Number(assetEditForm.usageHours),
@@ -1453,7 +1461,7 @@ export default function DashboardPage({ section }: { section: string }) {
                 >
                   <div className="asset-card-cover">
                     {asset.coverPhotoId
-                      ? <Image src={`/api/assets/${asset.id}/photos/${asset.coverPhotoId}`} alt={`Foto de ${asset.name}`} fill sizes="(max-width: 720px) 100vw, (max-width: 1050px) 50vw, 33vw" unoptimized />
+                      ? <button type="button" className="asset-card-image-button" aria-label={`Ampliar foto de ${asset.name}`} onClick={(event) => { event.stopPropagation(); setPhotoZoomUrl(`/api/assets/${asset.id}/photos/${asset.coverPhotoId}`); }}><Image src={`/api/assets/${asset.id}/photos/${asset.coverPhotoId}`} alt={`Foto de ${asset.name}`} fill sizes="(max-width: 720px) 100vw, (max-width: 1050px) 50vw, 33vw" unoptimized /></button>
                       : <span aria-hidden="true">{asset.category === "Veículo" ? "▰" : asset.category === "Computador" ? "▣" : "◈"}</span>}
                     <span className={`badge ${asset.status === "Em uso" ? "badge-green" : asset.status === "Em manutenção" ? "badge-amber" : "badge-neutral"}`}>{asset.status}</span>
                   </div>
@@ -1509,7 +1517,8 @@ export default function DashboardPage({ section }: { section: string }) {
                 <label>Situação<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{assetStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
                 <label>Próxima preventiva<input type="date" value={form.nextMaintenance} onChange={(event) => setForm({ ...form, nextMaintenance: event.target.value })} /></label>
                 {profile?.role === "admin" && <label>Unidade<select value={form.unitId} onChange={(event) => setForm({ ...form, unitId: event.target.value })}><option value="">Sem unidade</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>}
-                {profile?.role === "admin" && <label>Responsável inicial<select value={form.ownerUid || profile.uid} onChange={(event) => setForm({ ...form, ownerUid: event.target.value })}><option value={profile.uid}>Eu — {profile.displayName || profile.email}</option>{users.filter((user) => user.uid !== profile.uid).map((user) => <option key={user.uid} value={user.uid}>{user.displayName} — {user.email}</option>)}</select><span className="form-help">Selecione o usuário que receberá o equipamento desde o cadastro.</span></label>}
+                {profile?.role === "admin" && <label>Responsável inicial<select value={form.ownerUid || profile.uid} onChange={(event) => setForm({ ...form, ownerUid: event.target.value })}><option value={profile.uid}>Eu — {profile.displayName || profile.email}</option>{users.filter((user) => user.uid !== profile.uid).map((user) => <option key={user.uid} value={user.uid}>{user.displayName} — {user.email}</option>)}</select><span className="form-help">Selecione o responsável principal do equipamento.</span></label>}
+                {profile?.role === "admin" && <div className="wide-field"><strong>Pessoas autorizadas a usar</strong><span className="form-help">Opcional; os usuários selecionados poderão visualizar e usar o equipamento.</span><div className="checkbox-grid">{users.filter((user) => user.uid !== (form.ownerUid || profile.uid)).map((user) => <label key={user.uid} className="checkbox-option"><input type="checkbox" checked={form.sharedWithUids.includes(user.uid)} onChange={(event) => setForm({ ...form, sharedWithUids: event.target.checked ? [...form.sharedWithUids, user.uid] : form.sharedWithUids.filter((uid) => uid !== user.uid) })} />{user.displayName} — {user.email}</label>)}</div></div>}
                 <div className="form-group-heading"><strong>Aquisição e uso</strong><span>Dados para garantia, controle de custos e preventivas.</span></div>
                 <label>Data da compra<input type="date" value={form.purchaseDate} onChange={(event) => setForm({ ...form, purchaseDate: event.target.value })} /></label>
                 <label>Custo de aquisição (R$)<input type="number" min="0" step="0.01" value={form.purchaseCost} onChange={(event) => setForm({ ...form, purchaseCost: event.target.value })} /></label>
@@ -1941,8 +1950,8 @@ export default function DashboardPage({ section }: { section: string }) {
                   <label>Situação<select value={assetEditForm.status} onChange={(event) => setAssetEditForm({ ...assetEditForm, status: event.target.value })}>{assetStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
                   <label>Próxima preventiva<input type="date" value={assetEditForm.nextMaintenance} onChange={(event) => setAssetEditForm({ ...assetEditForm, nextMaintenance: event.target.value })} /></label>
                   {profile?.role === "admin" && <label>Unidade<select value={assetEditForm.unitId} onChange={(event) => setAssetEditForm({ ...assetEditForm, unitId: event.target.value })}><option value="">Sem unidade</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>}
-                  <div className="form-group-heading"><strong>Aquisição e uso</strong><span>Dados de compra, garantia e medidores.</span></div>
-                  {profile?.role === "admin" && <><label>Data da compra<input type="date" value={assetEditForm.purchaseDate} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseDate: event.target.value })} /></label>
+                  {profile?.role === "admin" && <div className="wide-field"><strong>Pessoas autorizadas a usar</strong><span className="form-help">Opcional; permite que outros usuários visualizem este ativo.</span><div className="checkbox-grid">{users.filter((user) => user.uid !== selectedQrAsset.ownerUid).map((user) => <label key={user.uid} className="checkbox-option"><input type="checkbox" checked={assetEditForm.sharedWithUids.includes(user.uid)} onChange={(event) => setAssetEditForm({ ...assetEditForm, sharedWithUids: event.target.checked ? [...assetEditForm.sharedWithUids, user.uid] : assetEditForm.sharedWithUids.filter((uid) => uid !== user.uid) })} />{user.displayName} — {user.email}</label>)}</div></div>}
+                  <div className="form-group-heading"><strong>Aquisição e uso</strong><span>Dados de compra, garantia e medidores.</span></div>                  {profile?.role === "admin" && <><label>Data da compra<input type="date" value={assetEditForm.purchaseDate} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseDate: event.target.value })} /></label>
                   <label>Custo de aquisição (R$)<input type="number" min="0" step="0.01" value={assetEditForm.purchaseCost} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseCost: event.target.value })} /></label>
                   <label>Garantia até<input type="date" value={assetEditForm.warrantyUntil} onChange={(event) => setAssetEditForm({ ...assetEditForm, warrantyUntil: event.target.value })} /></label></>}
                   {assetEditForm.category === "Veículo" && <label>Quilometragem atual<input type="number" min="0" step="1" value={assetEditForm.vehicleKm} onChange={(event) => setAssetEditForm({ ...assetEditForm, vehicleKm: event.target.value })} /></label>}
@@ -1955,6 +1964,7 @@ export default function DashboardPage({ section }: { section: string }) {
                   <p><strong>Fabricante / modelo</strong><span>{[selectedQrAsset.manufacturer, selectedQrAsset.model].filter(Boolean).join(" / ") || "—"}</span></p>
                   <p><strong>Número de série</strong><span>{selectedQrAsset.serialNumber || "—"}</span></p>
                   <p><strong>Localização</strong><span>{selectedQrAsset.location || "—"}</span></p><p><strong>Responsável</strong><span>{selectedQrAsset.ownerName || selectedQrAsset.ownerEmail || "—"}</span></p>
+                  {profile?.role === "admin" && <p><strong>Pessoas autorizadas</strong><span>{selectedQrAsset.sharedWithNames?.length ? selectedQrAsset.sharedWithNames.join("; ") : "Nenhuma"}</span></p>}
                   <p><strong>Situação</strong><span>{selectedQrAsset.status}</span></p><p><strong>Próxima preventiva</strong><span>{selectedQrAsset.nextMaintenance || "—"}</span></p>
                   {profile?.role === "admin" && <p><strong>Aquisição</strong><span>{selectedQrAsset.purchaseDate || "—"} · R$ {Number(selectedQrAsset.purchaseCost || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></p>}
                   {profile?.role === "admin" && <p><strong>Garantia até</strong><span>{selectedQrAsset.warrantyUntil || "—"}</span></p>}
@@ -2023,9 +2033,8 @@ export default function DashboardPage({ section }: { section: string }) {
                     <button className="button button-primary compact-button" type="submit" disabled={!equipmentPhotoFiles.length}>Salvar fotos</button>
                   </form>
                 </section>
-                <section className="asset-modal-section">
-                  <div className="asset-section-heading"><div><h3>Entregas e transferências</h3><p>Registro cronológico com responsáveis, observações e fotos de cada movimentação.</p></div>
-                    {profile?.role === "admin" && <button className="button button-secondary compact-button" type="button" onClick={() => startTransfer(selectedQrAsset)}>Registrar entrega / transferência</button>}
+                {profile?.role === "admin" && <section className="asset-modal-section">
+                  <div className="asset-section-heading"><div><h3>Entregas e transferências</h3><p>Registro cronológico com responsáveis, observações e fotos de cada movimentação.</p></div>                    {profile?.role === "admin" && <button className="button button-secondary compact-button" type="button" onClick={() => startTransfer(selectedQrAsset)}>Registrar entrega / transferência</button>}
                   </div>
                   {assetTransfers.length ? <div className="transfer-history">
                     {assetTransfers.map((transfer) => <article className="transfer-entry" key={transfer.id}>
@@ -2038,13 +2047,19 @@ export default function DashboardPage({ section }: { section: string }) {
                       </div>)}</div>}
                     </article>)}
                   </div> : !loadingAssetDetails && <p className="form-help">Nenhuma entrega formal foi registrada. Registre a primeira entrega para iniciar o histórico.</p>}
-                </section>
-                <div className="qr-print-card"><Image src={`/api/assets/${selectedQrAsset.id}/qr`} alt={`QR Code de ${selectedQrAsset.name}`} width={180} height={180} unoptimized /><span>Escaneie para abrir este patrimônio no sistema.</span></div>
-                <div className="inline-actions modal-actions"><button className="button button-secondary" type="button" onClick={() => window.print()}>Imprimir ficha e QR</button><button className="button button-primary" type="button" onClick={() => { setSelectedQrAsset(null); setEditingAsset(false); }}>Fechar</button></div>
+                </section>}
+                <div className="qr-print-card"><Image src={`/api/assets/${selectedQrAsset.id}/qr`} alt={`QR Code de ${selectedQrAsset.name}`} width={180} height={180} unoptimized /><span>Escaneie para abrir este patrimônio no sistema.</span></div>                <div className="inline-actions modal-actions"><button className="button button-secondary" type="button" onClick={() => window.print()}>Imprimir ficha e QR</button><button className="button button-primary" type="button" onClick={() => { setSelectedQrAsset(null); setEditingAsset(false); }}>Fechar</button></div>
                 </>}
               </section>
             </div>
           )}
+
+          {photoZoomUrl && <div className="photo-lightbox-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setPhotoZoomUrl(null); }}>
+            <section className="photo-lightbox" role="dialog" aria-modal="true" aria-label="Foto ampliada">
+              <button type="button" className="photo-lightbox-close" aria-label="Fechar foto ampliada" onClick={() => setPhotoZoomUrl(null)}>×</button>
+              <Image src={photoZoomUrl} alt="Foto ampliada do equipamento" fill sizes="95vw" unoptimized />
+            </section>
+          </div>}
 
           {transferAsset && profile?.role === "admin" && (
             <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setTransferAsset(null); }}>

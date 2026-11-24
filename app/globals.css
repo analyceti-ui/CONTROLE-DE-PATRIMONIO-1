@@ -161,7 +161,13 @@ td { padding: 11px 14px; border-top: 1px solid #eff2f0; color: #65716b; font-siz
 .asset-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: white; cursor: pointer; transition: border-color .2s, box-shadow .2s, transform .2s; }
 .asset-card:hover, .asset-card:focus-visible { border-color: #b7d2c2; box-shadow: 0 7px 20px rgba(29, 65, 48, .09); transform: translateY(-2px); outline: none; }
 .asset-card-cover { height: 165px; position: relative; display: grid; place-items: center; overflow: hidden; background: #edf3ef; }
-.asset-card-cover > img { object-fit: cover; }
+.asset-card-cover > img { object-fit: contain; }
+.asset-card-image-button { position: absolute; inset: 0; width: 100%; height: 100%; padding: 8px; border: 0; background: transparent; cursor: zoom-in; }
+.asset-card-image-button img { object-fit: contain; }
+.photo-lightbox-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(18, 28, 24, .82); backdrop-filter: blur(3px); }
+.photo-lightbox { position: relative; width: min(92vw, 980px); height: min(82vh, 760px); border-radius: 8px; overflow: hidden; background: #111713; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+.photo-lightbox img { object-fit: contain; }
+.photo-lightbox-close { position: absolute; top: 10px; right: 10px; z-index: 2; width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255,255,255,.94); color: #1d2b27; font-size: 24px; line-height: 30px; cursor: pointer; }
 .asset-card-cover > span:first-child { color: #7e9b8b; font-size: 38px; }
 .asset-card-cover .badge { position: absolute; top: 10px; right: 10px; }
 .asset-card-body { padding: 14px; }

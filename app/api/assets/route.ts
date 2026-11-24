@@ -12,13 +12,20 @@ export async function GET(request: Request) {
   try {
     const user = await getSessionUser(request);
     const assets = (await listRecords("assets", { organization_id: user.organizationId }))
-      .filter((asset) => user.role === "admin" || asset.owner_uid === user.uid)
       .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
     const owners = await listRecords("users", { organization_id: user.organizationId });
     const photos = await listRecords("asset_photos");
     const ownerMap = new Map(owners.map((owner) => [owner.id, owner]));
-    const items = assets.map((asset) => {
+    const items = assets.filter((asset) =>
+      user.role === "admin" || asset.owner_uid === user.uid ||
+      (Array.isArray(asset.shared_with_uids) && asset.shared_with_uids.includes(user.uid))
+    ).map((asset) => {
       const owner = ownerMap.get(String(asset.owner_uid));
+      const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
+      const sharedWithNames = sharedWithUids.map((uid) => {
+        const person = ownerMap.get(uid);
+        return person ? String(person.display_name || person.email) : uid;
+      });
       const cover = photos.filter((photo) => photo.asset_id === asset.id)
         .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
       const visibleAsset = user.role === "admin" ? asset : {
@@ -31,6 +38,8 @@ export async function GET(request: Request) {
         ...visibleAsset,
         nextMaintenance: visibleAsset.next_maintenance,
         ownerUid: visibleAsset.owner_uid,
+        sharedWithUids,
+        sharedWithNames,
         ownerEmail: owner?.email ?? "",
         ownerName: owner?.display_name ?? "",
         createdAt: asset.created_at,
@@ -86,6 +95,15 @@ export async function POST(request: Request) {
       throw new ApiError(400, "Detalhes do ativo inválidos ou muito extensos.");
     }
     let ownerUid = user.uid;
+    let sharedWithUids: string[] = [];
+    if (user.role === "admin" && Array.isArray(body.sharedWithUids)) {
+      sharedWithUids = [...new Set(body.sharedWithUids.filter((uid): uid is string => typeof uid === "string" && uid.trim().length > 0).map((uid) => uid.trim()))];
+      if (sharedWithUids.length > 100) throw new ApiError(400, "Selecione no máximo 100 usuários autorizados.");
+      for (const uid of sharedWithUids) {
+        const person = await getRecord("users", uid);
+        if (!person || person.organization_id !== user.organizationId || !person.active) throw new ApiError(400, "Selecione somente usuários ativos da mesma organização.");
+      }
+    }
     if (user.role === "admin" && requestedOwnerUid) {
       const owner = await getRecord("users", requestedOwnerUid);
       if (!owner || owner.organization_id !== user.organizationId || !owner.active) throw new ApiError(400, "Selecione um responsável válido.");
@@ -105,7 +123,8 @@ export async function POST(request: Request) {
     const timestamp = nowIso();
     await setRecord("assets", id, {
       name, category, tag, location, status, next_maintenance: nextMaintenance, owner_uid: ownerUid,
-      organization_id: user.organizationId, unit_id: unitId || null, manufacturer, model,
+      organization_id: user.organizationId, unit_id: unitId || null, shared_with_uids: sharedWithUids,
+      manufacturer, model,
       serial_number: serialNumber, purchase_date: purchaseDate, purchase_cost: purchaseCost,
       warranty_until: warrantyUntil, vehicle_km: vehicleKm, usage_hours: usageHours,
       last_maintenance_km: null, details_json: JSON.stringify(body.details ?? {}),
