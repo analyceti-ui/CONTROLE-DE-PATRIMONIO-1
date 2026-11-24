@@ -21,18 +21,24 @@ export async function GET(request: Request) {
       const owner = ownerMap.get(String(asset.owner_uid));
       const cover = photos.filter((photo) => photo.asset_id === asset.id)
         .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
-      return {
+      const visibleAsset = user.role === "admin" ? asset : {
         ...asset,
-        nextMaintenance: asset.next_maintenance,
-        ownerUid: asset.owner_uid,
+        purchase_date: "",
+        purchase_cost: 0,
+        warranty_until: "",
+      };
+      return {
+        ...visibleAsset,
+        nextMaintenance: visibleAsset.next_maintenance,
+        ownerUid: visibleAsset.owner_uid,
         ownerEmail: owner?.email ?? "",
         ownerName: owner?.display_name ?? "",
         createdAt: asset.created_at,
         updatedAt: asset.updated_at,
         serialNumber: asset.serial_number,
-        purchaseDate: asset.purchase_date,
-        purchaseCost: asset.purchase_cost,
-        warrantyUntil: asset.warranty_until,
+        purchaseDate: visibleAsset.purchase_date,
+        purchaseCost: visibleAsset.purchase_cost,
+        warrantyUntil: visibleAsset.warranty_until,
         vehicleKm: asset.vehicle_km,
         usageHours: asset.usage_hours,
         lastMaintenanceKm: asset.last_maintenance_km,

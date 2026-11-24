@@ -4,9 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { EmailAuthProvider, reauthenticateWithCredential, signOut, updatePassword } from "firebase/auth";
 import type { UserRole } from "@/lib/api";
-import { getClientFirebaseAuth } from "@/lib/firebase-client";
 
 type Asset = {
   id: string;
@@ -926,11 +924,15 @@ export default function DashboardPage({ section }: { section: string }) {
     setBusy(true);
     setError("");
     setNotice("");
-    const { unitId, ...editableFields } = assetEditForm;
+    const { unitId, purchaseDate, purchaseCost, warrantyUntil, ...editableFields } = assetEditForm;
     const changes = {
       ...editableFields,
-      ...(profile?.role === "admin" ? { unitId } : {}),
-      purchaseCost: Number(assetEditForm.purchaseCost || 0),
+      ...(profile?.role === "admin" ? {
+        unitId,
+        purchaseDate,
+        purchaseCost: Number(purchaseCost || 0),
+        warrantyUntil,
+      } : {}),
       vehicleKm: assetEditForm.vehicleKm === "" ? null : Number(assetEditForm.vehicleKm),
       usageHours: assetEditForm.usageHours === "" ? null : Number(assetEditForm.usageHours),
     };
@@ -942,7 +944,7 @@ export default function DashboardPage({ section }: { section: string }) {
       setSelectedQrAsset((current) => current?.id === selectedQrAsset.id ? {
         ...current,
         ...changes,
-        purchaseCost: changes.purchaseCost,
+        purchaseCost: typeof changes.purchaseCost === "number" ? changes.purchaseCost : current.purchaseCost,
       } : current);
       setEditingAsset(false);
       setAssetEditForm(null);
@@ -1144,15 +1146,9 @@ export default function DashboardPage({ section }: { section: string }) {
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      const auth = getClientFirebaseAuth();
-      const firebaseUser = auth.currentUser;
-      if (!firebaseUser?.email) throw new Error("Sua sessão do Firebase expirou. Entre novamente.");
-      const credential = EmailAuthProvider.credential(firebaseUser.email, passwordForm.currentPassword);
-      await reauthenticateWithCredential(firebaseUser, credential);
-      await updatePassword(firebaseUser, passwordForm.newPassword);
       await responseData(await api("/api/users", {
         method: "PATCH",
-        body: JSON.stringify({ newPassword: passwordForm.newPassword }),
+        body: JSON.stringify(passwordForm),
       }));
       setPasswordForm({ currentPassword: "", newPassword: "" });
       await logout();
@@ -1254,7 +1250,6 @@ export default function DashboardPage({ section }: { section: string }) {
 
   async function logout() {
     await api("/api/auth", { method: "DELETE" });
-    await signOut(getClientFirebaseAuth());
     router.replace("/");
   }
 
@@ -1514,7 +1509,7 @@ export default function DashboardPage({ section }: { section: string }) {
                 <label>Situação<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{assetStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
                 <label>Próxima preventiva<input type="date" value={form.nextMaintenance} onChange={(event) => setForm({ ...form, nextMaintenance: event.target.value })} /></label>
                 {profile?.role === "admin" && <label>Unidade<select value={form.unitId} onChange={(event) => setForm({ ...form, unitId: event.target.value })}><option value="">Sem unidade</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>}
-                {profile?.role === "admin" && <label>Responsável<select value={form.ownerUid || profile.uid} onChange={(event) => setForm({ ...form, ownerUid: event.target.value })}><option value={profile.uid}>Eu — {profile.displayName || profile.email}</option>{users.filter((user) => user.uid !== profile.uid).map((user) => <option key={user.uid} value={user.uid}>{user.displayName} — {user.email}</option>)}</select></label>}
+                {profile?.role === "admin" && <label>Responsável inicial<select value={form.ownerUid || profile.uid} onChange={(event) => setForm({ ...form, ownerUid: event.target.value })}><option value={profile.uid}>Eu — {profile.displayName || profile.email}</option>{users.filter((user) => user.uid !== profile.uid).map((user) => <option key={user.uid} value={user.uid}>{user.displayName} — {user.email}</option>)}</select><span className="form-help">Selecione o usuário que receberá o equipamento desde o cadastro.</span></label>}
                 <div className="form-group-heading"><strong>Aquisição e uso</strong><span>Dados para garantia, controle de custos e preventivas.</span></div>
                 <label>Data da compra<input type="date" value={form.purchaseDate} onChange={(event) => setForm({ ...form, purchaseDate: event.target.value })} /></label>
                 <label>Custo de aquisição (R$)<input type="number" min="0" step="0.01" value={form.purchaseCost} onChange={(event) => setForm({ ...form, purchaseCost: event.target.value })} /></label>
@@ -1947,9 +1942,9 @@ export default function DashboardPage({ section }: { section: string }) {
                   <label>Próxima preventiva<input type="date" value={assetEditForm.nextMaintenance} onChange={(event) => setAssetEditForm({ ...assetEditForm, nextMaintenance: event.target.value })} /></label>
                   {profile?.role === "admin" && <label>Unidade<select value={assetEditForm.unitId} onChange={(event) => setAssetEditForm({ ...assetEditForm, unitId: event.target.value })}><option value="">Sem unidade</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>}
                   <div className="form-group-heading"><strong>Aquisição e uso</strong><span>Dados de compra, garantia e medidores.</span></div>
-                  <label>Data da compra<input type="date" value={assetEditForm.purchaseDate} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseDate: event.target.value })} /></label>
+                  {profile?.role === "admin" && <><label>Data da compra<input type="date" value={assetEditForm.purchaseDate} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseDate: event.target.value })} /></label>
                   <label>Custo de aquisição (R$)<input type="number" min="0" step="0.01" value={assetEditForm.purchaseCost} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseCost: event.target.value })} /></label>
-                  <label>Garantia até<input type="date" value={assetEditForm.warrantyUntil} onChange={(event) => setAssetEditForm({ ...assetEditForm, warrantyUntil: event.target.value })} /></label>
+                  <label>Garantia até<input type="date" value={assetEditForm.warrantyUntil} onChange={(event) => setAssetEditForm({ ...assetEditForm, warrantyUntil: event.target.value })} /></label></>}
                   {assetEditForm.category === "Veículo" && <label>Quilometragem atual<input type="number" min="0" step="1" value={assetEditForm.vehicleKm} onChange={(event) => setAssetEditForm({ ...assetEditForm, vehicleKm: event.target.value })} /></label>}
                   <label>Horas de uso<input type="number" min="0" step="1" value={assetEditForm.usageHours} onChange={(event) => setAssetEditForm({ ...assetEditForm, usageHours: event.target.value })} /></label>
                   <p className="form-help wide-field">O responsável não pode ser alterado nesta edição. Use “Entrega / transferir” para manter fotos, observações e histórico de cada troca.</p>
@@ -1961,8 +1956,8 @@ export default function DashboardPage({ section }: { section: string }) {
                   <p><strong>Número de série</strong><span>{selectedQrAsset.serialNumber || "—"}</span></p>
                   <p><strong>Localização</strong><span>{selectedQrAsset.location || "—"}</span></p><p><strong>Responsável</strong><span>{selectedQrAsset.ownerName || selectedQrAsset.ownerEmail || "—"}</span></p>
                   <p><strong>Situação</strong><span>{selectedQrAsset.status}</span></p><p><strong>Próxima preventiva</strong><span>{selectedQrAsset.nextMaintenance || "—"}</span></p>
-                  <p><strong>Aquisição</strong><span>{selectedQrAsset.purchaseDate || "—"} · R$ {Number(selectedQrAsset.purchaseCost || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></p>
-                  <p><strong>Garantia até</strong><span>{selectedQrAsset.warrantyUntil || "—"}</span></p>
+                  {profile?.role === "admin" && <p><strong>Aquisição</strong><span>{selectedQrAsset.purchaseDate || "—"} · R$ {Number(selectedQrAsset.purchaseCost || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></p>}
+                  {profile?.role === "admin" && <p><strong>Garantia até</strong><span>{selectedQrAsset.warrantyUntil || "—"}</span></p>}
                   {selectedQrAsset.vehicleKm !== null && <p><strong>Quilometragem</strong><span>{selectedQrAsset.vehicleKm.toLocaleString("pt-BR")} km</span></p>}
                   {selectedQrAsset.usageHours !== null && <p><strong>Horas de uso</strong><span>{selectedQrAsset.usageHours.toLocaleString("pt-BR")} h</span></p>}
                 </div>
