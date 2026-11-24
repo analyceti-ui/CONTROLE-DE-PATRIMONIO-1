@@ -14,7 +14,10 @@ export async function GET(request: Request) {
       listRecords("users", { organization_id: user.organizationId }),
       getFirestoreDb().collection("notification_preferences").doc(user.uid).get(),
     ]);
-    const visible = assets.filter((asset) => (user.role === "admin" || asset.owner_uid === user.uid) && !excludedStatuses.has(String(asset.status)));
+    const visible = assets.filter((asset) => {
+      const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
+      return (user.role === "admin" || asset.owner_uid === user.uid || sharedWithUids.includes(user.uid)) && !excludedStatuses.has(String(asset.status));
+    });
     const plansByAsset = new Map(plans.map((plan) => [String(plan.asset_id), plan]));
     const people = new Map(users.map((person) => [person.id, person]));
     const today = new Date();

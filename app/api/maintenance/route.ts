@@ -12,7 +12,10 @@ export async function GET(request: Request) {
       listRecords("maintenance_plans"),
       listRecords("users", { organization_id: user.organizationId }),
     ]);
-    const visibleAssets = new Map(assets.filter((asset) => user.role === "admin" || asset.owner_uid === user.uid).map((asset) => [asset.id, asset]));
+    const visibleAssets = new Map(assets.filter((asset) => {
+      const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
+      return user.role === "admin" || asset.owner_uid === user.uid || sharedWithUids.includes(user.uid);
+    }).map((asset) => [asset.id, asset]));
     const people = new Map(users.map((person) => [person.id, person]));
     return NextResponse.json({
       plans: plans.filter((plan) => visibleAssets.has(String(plan.asset_id)))
@@ -54,7 +57,9 @@ export async function POST(request: Request) {
         throw new ApiError(400, `Informe um valor válido para ${label}.`);
       }
     }
-    if (intervalDays === null && intervalKm === null && intervalHours === null) throw new ApiError(400, "Defina ao menos uma periodicidade por data, quilometragem ou horas.");
+    if (intervalDays === null && intervalKm === null && intervalHours === null && !nextDate && nextDueKm === null && nextDueHours === null) {
+      throw new ApiError(400, "Defina uma data ou meta de quilometragem/horas para a preventiva.");
+    }
     if (nextDate && (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || Number.isNaN(Date.parse(`${nextDate}T00:00:00Z`)))) {
       throw new ApiError(400, "Informe uma data válida para a preventiva.");
     }
