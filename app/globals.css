@@ -192,6 +192,9 @@ td { padding: 11px 14px; border-top: 1px solid #eff2f0; color: #65716b; font-siz
 .asset-card-details { margin: 12px 0; display: grid; gap: 9px; }
 .asset-card-details div { min-width: 0; display: flex; justify-content: space-between; gap: 10px; }
 .asset-card-details dt { flex: 0 0 auto; color: #87918c; font-size: 10px; }
+.checkbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; margin-top: 8px; }
+.checkbox-option { display: flex !important; align-items: center; gap: 7px; color: #45534c; font-size: 11px; }
+.checkbox-option input { width: 14px; height: 14px; accent-color: var(--green); }
 .asset-card-details dd { min-width: 0; margin: 0; overflow: hidden; color: #45534c; font-size: 10px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .asset-card-hint { margin-top: 12px; padding-top: 10px; display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); color: var(--green); font-size: 10px; font-weight: 600; }
 .asset-card-hint span { font-size: 14px; }

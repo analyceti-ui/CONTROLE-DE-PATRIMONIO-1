@@ -1566,7 +1566,7 @@ export default function DashboardPage({ section }: { section: string }) {
                     <dl className="asset-card-details">
                       <div><dt>Patrimônio / placa</dt><dd>{asset.tag || "—"}</dd></div>
                       <div><dt>Localização</dt><dd>{asset.location || "—"}</dd></div>
-                      {profile?.role === "admin" && <div><dt>Responsável</dt><dd>{asset.ownerName || asset.ownerEmail || "—"}</dd></div>}
+                      <div><dt>{asset.sharedWithNames?.length ? "Responsáveis" : "Responsável"}</dt><dd>{[asset.ownerName || asset.ownerEmail || "—", ...(asset.sharedWithNames ?? [])].filter((name, index, names) => name && names.indexOf(name) === index).join("; ")}</dd></div>
                       <div><dt>Próxima preventiva</dt><dd>{asset.nextMaintenance ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${asset.nextMaintenance}T00:00:00`)) : "—"}</dd></div>
                     </dl>
                     <span className="asset-card-hint">Clique para abrir detalhes, fotos e histórico <span aria-hidden="true">→</span></span>
@@ -1576,7 +1576,7 @@ export default function DashboardPage({ section }: { section: string }) {
               {!equipmentAssets.length && <p className="empty-panel">{assets.length ? "Nenhum equipamento nesta categoria corresponde à busca." : profile?.role === "admin" ? "Ainda não há equipamentos. Use “Novo equipamento” para cadastrar o primeiro." : "Nenhum patrimônio está vinculado a você. Peça ao administrador para associar os ativos à sua conta."}</p>}
             </div> : <div className="table-scroll equipment-list-scroll">
               <table className="equipment-list-table">
-                <thead><tr><th>EQUIPAMENTO</th><th>CATEGORIA</th><th>PATRIMÔNIO / PLACA</th><th>LOCALIZAÇÃO</th>{profile?.role === "admin" && <th>RESPONSÁVEL</th>}<th>SITUAÇÃO</th><th>PRÓXIMA PREVENTIVA</th></tr></thead>
+                <thead><tr><th>EQUIPAMENTO</th><th>CATEGORIA</th><th>PATRIMÔNIO / PLACA</th><th>LOCALIZAÇÃO</th><th>RESPONSÁVEL(IS)</th><th>SITUAÇÃO</th><th>PRÓXIMA PREVENTIVA</th></tr></thead>
                 <tbody>{equipmentAssets.map((asset) => (
                   <tr key={asset.id} onClick={() => setSelectedQrAsset(asset)}>
                     <td><button className="equipment-list-open" type="button" aria-label={`Abrir detalhes do equipamento ${asset.name}`} onClick={() => setSelectedQrAsset(asset)}>
@@ -1586,12 +1586,12 @@ export default function DashboardPage({ section }: { section: string }) {
                       <strong>{asset.name}</strong>
                     </button></td>
                     <td>{asset.category}</td><td>{asset.tag || "—"}</td><td>{asset.location || "—"}</td>
-                    {profile?.role === "admin" && <td>{asset.ownerName || asset.ownerEmail || "—"}</td>}
+                    <td>{[asset.ownerName || asset.ownerEmail || "—", ...(asset.sharedWithNames ?? [])].filter((name, index, names) => name && names.indexOf(name) === index).join("; ")}</td>
                     <td><span className={`badge ${asset.status === "Em uso" ? "badge-green" : asset.status === "Em manutenção" ? "badge-amber" : "badge-neutral"}`}>{asset.status}</span></td>
                     <td>{asset.nextMaintenance ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${asset.nextMaintenance}T00:00:00`)) : "—"}</td>
                   </tr>
                 ))}
-                {!equipmentAssets.length && <tr><td colSpan={profile?.role === "admin" ? 7 : 6} className="empty-cell">{assets.length ? "Nenhum equipamento nesta categoria corresponde à busca." : profile?.role === "admin" ? "Ainda não há equipamentos. Use “Novo equipamento” para cadastrar o primeiro." : "Nenhum patrimônio está vinculado a você. Peça ao administrador para associar os ativos à sua conta."}</td></tr>}
+                {!equipmentAssets.length && <tr><td colSpan={7} className="empty-cell">{assets.length ? "Nenhum equipamento nesta categoria corresponde à busca." : profile?.role === "admin" ? "Ainda não há equipamentos. Use “Novo equipamento” para cadastrar o primeiro." : "Nenhum patrimônio está vinculado a você. Peça ao administrador para associar os ativos à sua conta."}</td></tr>}
                 </tbody>
               </table>
             </div>}
@@ -2059,8 +2059,8 @@ export default function DashboardPage({ section }: { section: string }) {
                   <p><strong>Categoria</strong><span>{selectedQrAsset.category}</span></p><p><strong>Patrimônio / placa</strong><span>{selectedQrAsset.tag || "—"}</span></p>
                   <p><strong>Fabricante / modelo</strong><span>{[selectedQrAsset.manufacturer, selectedQrAsset.model].filter(Boolean).join(" / ") || "—"}</span></p>
                   <p><strong>Número de série</strong><span>{selectedQrAsset.serialNumber || "—"}</span></p>
-                  <p><strong>Localização</strong><span>{selectedQrAsset.location || "—"}</span></p><p><strong>Responsável</strong><span>{selectedQrAsset.ownerName || selectedQrAsset.ownerEmail || "—"}</span></p>
-                  {profile?.role === "admin" && <p><strong>Pessoas autorizadas</strong><span>{selectedQrAsset.sharedWithNames?.length ? selectedQrAsset.sharedWithNames.join("; ") : "Nenhuma"}</span></p>}
+                  <p><strong>Localização</strong><span>{selectedQrAsset.location || "—"}</span></p><p><strong>Responsável principal</strong><span>{selectedQrAsset.ownerName || selectedQrAsset.ownerEmail || "—"}</span></p>
+                  <p><strong>Responsáveis adicionais</strong><span>{selectedQrAsset.sharedWithNames?.length ? selectedQrAsset.sharedWithNames.join("; ") : "Nenhum"}</span></p>
                   <p><strong>Situação</strong><span>{selectedQrAsset.status}</span></p><p><strong>Próxima preventiva</strong><span>{selectedQrAsset.nextMaintenance || "—"}</span></p>
                   {profile?.role === "admin" && <p><strong>Aquisição</strong><span>{selectedQrAsset.purchaseDate || "—"} · R$ {Number(selectedQrAsset.purchaseCost || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></p>}
                   {profile?.role === "admin" && <p><strong>Garantia até</strong><span>{selectedQrAsset.warrantyUntil || "—"}</span></p>}
