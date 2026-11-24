@@ -11,7 +11,8 @@ async function loadAsset(request: Request, id: string) {
   const asset = await getRecord("assets", id);
   if (!asset) throw new ApiError(404, "Ativo não encontrado.");
   requireOrganizationUser(user, String(asset.organization_id));
-  if (user.role !== "admin" && asset.owner_uid !== user.uid) throw new ApiError(404, "Ativo não encontrado.");
+  const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
+  if (user.role !== "admin" && asset.owner_uid !== user.uid && !sharedWithUids.includes(user.uid)) throw new ApiError(404, "Ativo não encontrado.");
   return { user, asset };
 }
 
@@ -32,8 +33,21 @@ export async function GET(request: Request, context: RouteContext) {
     const people = new Map(users.map((person) => [person.id, person]));
     const sortRecent = <T extends Record<string, unknown> & { id: string }>(records: T[]) =>
       records.sort((a, b) => String(b["created_at"] ?? "").localeCompare(String(a["created_at"] ?? ""))).slice(0, 100);
+    const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
+    const visibleAsset = user.role === "admin" ? {
+      ...asset,
+      shared_with_uids: sharedWithUids,
+      shared_with_names: sharedWithUids.map((uid) => String(people.get(uid)?.display_name || people.get(uid)?.email || uid)),
+    } : {
+      ...asset,
+      shared_with_uids: sharedWithUids,
+      shared_with_names: sharedWithUids.map((uid) => String(people.get(uid)?.display_name || people.get(uid)?.email || uid)),
+      purchase_date: "",
+      purchase_cost: 0,
+      warranty_until: "",
+    };
     return NextResponse.json({
-      asset: { ...asset, ownerEmail: owner?.email ?? "", ownerName: owner?.display_name ?? "" },
+      asset: { ...visibleAsset, ownerEmail: owner?.email ?? "", ownerName: owner?.display_name ?? "" },
       history: sortRecent(histories).map((entry) => ({
         id: entry.id, eventType: entry.event_type, description: entry.description,
         metadataJson: entry.metadata_json ?? "{}", createdAt: entry.created_at,
@@ -120,6 +134,21 @@ export async function PATCH(request: Request, context: RouteContext) {
       if (user.role !== "admin") throw new ApiError(403, "Somente administradores podem alterar o responsável pelo ativo.");
       throw new ApiError(400, "Para registrar a entrega ou troca de responsável, use o formulário de transferência com fotos e observações.");
     }
+    if ("sharedWithUids" in body) {
+      if (user.role !== "admin") throw new ApiError(403, "Somente administradores podem alterar usuários autorizados.");
+      if (!Array.isArray(body.sharedWithUids)) throw new ApiError(400, "Usuários autorizados inválidos.");
+      const sharedWithUids = [...new Set(body.sharedWithUids.filter((uid): uid is string => typeof uid === "string" && uid.trim().length > 0).map((uid) => uid.trim()))];
+      if (sharedWithUids.length > 100) throw new ApiError(400, "Selecione no máximo 100 usuários autorizados.");
+      for (const uid of sharedWithUids) {
+        const person = await getRecord("users", uid);
+        if (!person || person.organization_id !== user.organizationId || !person.active) throw new ApiError(400, "Selecione somente usuários ativos da mesma organização.");
+      }
+    }
+    if (user.role !== "admin") {
+      for (const field of ["purchaseDate", "purchaseCost", "warrantyUntil", "unitId"]) {
+        if (field in body) throw new ApiError(403, "Somente administradores podem alterar dados financeiros ou administrativos do ativo.");
+      }
+    }
     const fields: Record<string, string> = {
       name: "name", category: "category", tag: "tag", location: "location", status: "status",
       nextMaintenance: "next_maintenance", unitId: "unit_id", manufacturer: "manufacturer", model: "model",
@@ -127,6 +156,9 @@ export async function PATCH(request: Request, context: RouteContext) {
       warrantyUntil: "warranty_until", vehicleKm: "vehicle_km", usageHours: "usage_hours",
     };
     const changes: Record<string, unknown> = {};
+    if (Array.isArray(body.sharedWithUids) && user.role === "admin") {
+      changes.shared_with_uids = [...new Set(body.sharedWithUids.filter((uid): uid is string => typeof uid === "string" && uid.trim().length > 0).map((uid) => uid.trim()))].filter((uid) => uid !== asset.owner_uid);
+    }
     for (const [field, column] of Object.entries(fields)) {
       if (!(field in body)) continue;
       const value = body[field];
