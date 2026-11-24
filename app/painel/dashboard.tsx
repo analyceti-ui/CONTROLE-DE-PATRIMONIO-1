@@ -726,11 +726,22 @@ export default function DashboardPage({ section }: { section: string }) {
     }
     const detailRequest = api(`/api/assets/${selectedQrAsset.id}`)
       .then((response) => responseData<{
+        asset: {
+          shared_with_uids?: string[];
+          shared_with_names?: string[];
+        };
         photos: AssetPhoto[];
         transfers: AssetTransfer[];
       }>(response))
       .then((data) => {
         if (!active) return;
+        const sharedWithUids = Array.isArray(data.asset.shared_with_uids) ? data.asset.shared_with_uids.map(String) : [];
+        const sharedWithNames = Array.isArray(data.asset.shared_with_names) ? data.asset.shared_with_names.map(String) : [];
+        setSelectedQrAsset((current) => current ? {
+          ...current,
+          sharedWithUids,
+          sharedWithNames,
+        } : current);
         setAssetPhotos(data.photos);
         setAssetTransfers(data.transfers);
       });
@@ -1027,9 +1038,14 @@ export default function DashboardPage({ section }: { section: string }) {
         method: "PATCH",
         body: JSON.stringify(changes),
       }));
+      const sharedWithNames = profile?.role === "admin" && Array.isArray(sharedWithUids)
+        ? sharedWithUids.map((uid) => users.find((person) => person.uid === uid)?.displayName || users.find((person) => person.uid === uid)?.email || uid)
+        : [];
       setSelectedQrAsset((current) => current?.id === selectedQrAsset.id ? {
         ...current,
         ...changes,
+        sharedWithUids: profile?.role === "admin" ? sharedWithUids : current.sharedWithUids,
+        sharedWithNames,
         purchaseCost: typeof changes.purchaseCost === "number" ? changes.purchaseCost : current.purchaseCost,
       } : current);
       setEditingAsset(false);

@@ -108,6 +108,7 @@ export async function POST(request: Request) {
       const owner = await getRecord("users", requestedOwnerUid);
       if (!owner || owner.organization_id !== user.organizationId || !owner.active) throw new ApiError(400, "Selecione um responsável válido.");
       ownerUid = owner.id;
+      sharedWithUids = sharedWithUids.filter((uid) => uid !== ownerUid);
     }
     if (user.role === "admin" && unitId) {
       const unit = await getRecord("units", unitId);
