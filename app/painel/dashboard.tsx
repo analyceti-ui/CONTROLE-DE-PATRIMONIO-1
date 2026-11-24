@@ -232,6 +232,7 @@ export default function DashboardPage({ section }: { section: string }) {
   const router = useRouter();
   const notificationPanelRef = useRef<HTMLDivElement>(null);
   const notificationKeysRef = useRef<Set<string> | null>(null);
+  const loadDataRunningRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -366,6 +367,8 @@ export default function DashboardPage({ section }: { section: string }) {
   const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
 
   const loadData = useCallback(async (forceRefresh = true) => {
+    if (loadDataRunningRef.current) return;
+    loadDataRunningRef.current = true;
     setError("");
     try {
       if (typeof window !== "undefined") {
@@ -413,95 +416,97 @@ export default function DashboardPage({ section }: { section: string }) {
               setAssetCategories(cached.assetCategories);
               setAssetStatuses(cached.assetStatuses);
               setLoading(false);
-              if (!forceRefresh && cacheIsFresh) return;
+              if (!forceRefresh && cacheIsFresh) {
+                loadDataRunningRef.current = false;
+                return;
+              }
             }
           } catch {
             window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
           }
         }
       }
+
+      let sectionAssets: Asset[] | null = null;
       const profileData = await responseData<Profile>(await api("/api/auth/profile"));
       setProfile(profileData);
       if (profileData.mustChangePassword) {
-        setAssets([]);
-        setUsers([]);
-        setOrders([]);
-        setInventory([]);
-        setPurchaseRequests([]);
-        setInspections([]);
-        setMaintenancePlans([]);
-        setUnits([]);
-        setNotificationAlerts([]);
+        setAssets([]); setUsers([]); setOrders([]); setInventory([]); setPurchaseRequests([]);
+        setInspections([]); setMaintenancePlans([]); setUnits([]); setNotificationAlerts([]);
         setAssetCategories(["Veículo", "Computador", "Equipamento", "Outro"]);
         setAssetStatuses(["Em uso", "Disponível", "Em manutenção", "Baixado"]);
-        setUnits([]);
         setLoading(false);
         return;
       }
-      const [
-        assetResponse,
-        orderResponse,
-        inventoryResponse,
-        requestResponse,
-        inspectionResponse,
-        reportResponse,
-        notificationResponse,
-        unitResponse,
-        assetOptionsResponse,
-      ] = await Promise.all([
-        api("/api/assets"),
-        api("/api/service-orders"),
-        api("/api/inventory"),
-        api("/api/purchase-requests"),
-        api("/api/inspections"),
-        api("/api/reports"),
-        api("/api/notifications"),
-        api("/api/units"),
-        api("/api/asset-options"),
-      ]);
-      const assetData = await responseData<{ items: Asset[] }>(assetResponse);
-      setAssets(assetData.items);
-      setOrders((await responseData<{ orders: ServiceOrder[] }>(orderResponse)).orders);
-      setInventory((await responseData<{ items: InventoryItem[] }>(inventoryResponse)).items);
-      setPurchaseRequests((await responseData<{ requests: PurchaseRequest[] }>(requestResponse)).requests);
-      setInspections((await responseData<{ inspections: Inspection[] }>(inspectionResponse)).inspections);
-      setReportTotals((await responseData<{ totals: typeof reportTotals }>(reportResponse)).totals);
-      const notificationData = await responseData<{
-        preferences: { inApp: number; emailEnabled: number };
-        alerts: NotificationAlert[];
-        externalDeliveryConfigured: boolean;
-      }>(notificationResponse);
-      setInAppNotifications(Boolean(notificationData.preferences.inApp));
-      setEmailNotifications(Boolean(notificationData.preferences.emailEnabled));
-      setNotificationAlerts(notificationData.alerts);
-      notificationKeysRef.current = new Set(notificationData.alerts.map(getNotificationKey));
-      setExternalDeliveryConfigured(notificationData.externalDeliveryConfigured);
-      setUnits((await responseData<{ units: Unit[] }>(unitResponse)).units);
-      const assetOptions = await responseData<{ categories: string[]; statuses: string[] }>(assetOptionsResponse);
-      setAssetCategories(assetOptions.categories);
-      setAssetStatuses(assetOptions.statuses);
-      if (profileData.role === "admin") {
-        const [userResponse, maintenanceResponse, auditResponse, organizationResponse] = await Promise.all([
-          api("/api/users"),
-          api("/api/maintenance"),
-          api("/api/audit"),
-          api("/api/organizations"),
-        ]);
-        setUsers((await responseData<{ users: User[] }>(userResponse)).users);
-        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(maintenanceResponse)).plans);
-        setAuditEntries((await responseData<{ entries: AuditEntry[] }>(auditResponse)).entries);
-        setOrganization((await responseData<{ organization: { id: string; name: string } }>(organizationResponse)).organization);
-      } else {
-        setUsers([]);
-        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
-        setOrganization(null);
+
+      if (section === "assets" || section === "overview" || section === "reports" || section === "fuel") {
+        const assetResponse = await api("/api/assets");
+        const assetData = await responseData<{ items: Asset[] }>(assetResponse);
+        setAssets(assetData.items);
+        sectionAssets = assetData.items;
       }
 
-      const requestedAssetId = section === "assets"
-        ? new URLSearchParams(window.location.search).get("asset")
-        : null;
-      if (requestedAssetId) {
-        const requestedAsset = assetData.items.find((asset) => asset.id === requestedAssetId);
+      if (section === "assets") {
+        const [optionsResponse, unitsResponse] = await Promise.all([api("/api/asset-options"), api("/api/units")]);
+        const options = await responseData<{ categories: string[]; statuses: string[] }>(optionsResponse);
+        setAssetCategories(options.categories);
+        setAssetStatuses(options.statuses);
+        setUnits((await responseData<{ units: Unit[] }>(unitsResponse)).units);
+      }
+
+      if (section === "overview" || section === "maintenance") {
+        const [notificationResponse, maintenanceResponse] = await Promise.all([api("/api/notifications"), api("/api/maintenance")]);
+        const notificationData = await responseData<{ preferences: { inApp: number; emailEnabled: number }; alerts: NotificationAlert[]; externalDeliveryConfigured: boolean }>(notificationResponse);
+        setInAppNotifications(Boolean(notificationData.preferences.inApp));
+        setEmailNotifications(Boolean(notificationData.preferences.emailEnabled));
+        setNotificationAlerts(notificationData.alerts);
+        notificationKeysRef.current = new Set(notificationData.alerts.map(getNotificationKey));
+        setExternalDeliveryConfigured(notificationData.externalDeliveryConfigured);
+        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(maintenanceResponse)).plans);
+      }
+
+      if (section === "orders") {
+        const [assetsResponse, ordersResponse] = await Promise.all([api("/api/assets"), api("/api/service-orders")]);
+        setAssets((await responseData<{ items: Asset[] }>(assetsResponse)).items);
+        setOrders((await responseData<{ orders: ServiceOrder[] }>(ordersResponse)).orders);
+      }
+      if (section === "inventory") {
+        setInventory((await responseData<{ items: InventoryItem[] }>(await api("/api/inventory"))).items);
+      }
+      if (section === "purchases") {
+        setPurchaseRequests((await responseData<{ requests: PurchaseRequest[] }>(await api("/api/purchase-requests"))).requests);
+      }
+      if (section === "inspections") {
+        const [assetsResponse, inspectionsResponse] = await Promise.all([api("/api/assets"), api("/api/inspections")]);
+        setAssets((await responseData<{ items: Asset[] }>(assetsResponse)).items);
+        setInspections((await responseData<{ inspections: Inspection[] }>(inspectionsResponse)).inspections);
+      }
+      if (section === "reports") {
+        setReportTotals((await responseData<{ totals: typeof reportTotals }>(await api("/api/reports"))).totals);
+      }
+      if (section === "fuel") {
+        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
+      }
+      if (profileData.role === "admin" && (section === "users" || section === "settings" || section === "overview" || section === "audit")) {
+        if (section === "users" || section === "settings" || section === "overview") {
+          setUsers((await responseData<{ users: User[] }>(await api("/api/users"))).users);
+        }
+        if (section === "audit") {
+          setAuditEntries((await responseData<{ entries: AuditEntry[] }>(await api("/api/audit"))).entries);
+        }
+        if (section === "settings") {
+          const [optionsResponse, unitsResponse, organizationResponse] = await Promise.all([api("/api/asset-options"), api("/api/units"), api("/api/organizations")]);
+          const options = await responseData<{ categories: string[]; statuses: string[] }>(optionsResponse);
+          setAssetCategories(options.categories);
+          setAssetStatuses(options.statuses);
+          setUnits((await responseData<{ units: Unit[] }>(unitsResponse)).units);
+          setOrganization((await responseData<{ organization: { id: string; name: string } }>(organizationResponse)).organization);
+        }
+      }
+
+      const requestedAssetId = section === "assets" ? new URLSearchParams(window.location.search).get("asset") : null;
+      if (requestedAssetId && sectionAssets) {
+        const requestedAsset = sectionAssets.find((asset) => asset.id === requestedAssetId);
         if (requestedAsset) {
           setSelectedQrAsset(requestedAsset);
           window.history.replaceState({}, "", window.location.pathname);
@@ -512,6 +517,7 @@ export default function DashboardPage({ section }: { section: string }) {
       setError(message);
       if (message.includes("login") || message.includes("sessão expirou")) router.replace("/");
     } finally {
+      loadDataRunningRef.current = false;
       setLoading(false);
     }
   }, [api, router, section, DASHBOARD_CACHE_KEY, DASHBOARD_CACHE_TTL_MS]);

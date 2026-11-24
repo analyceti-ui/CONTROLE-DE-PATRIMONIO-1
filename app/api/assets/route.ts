@@ -55,7 +55,9 @@ export async function GET(request: Request) {
         coverPhotoId: cover?.id ?? null,
       };
     });
-    return NextResponse.json({ items });
+    const response = NextResponse.json({ items });
+    response.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=180");
+    return response;
   } catch (error) {
     return handleApiError(error);
   }

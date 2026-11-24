@@ -10,7 +10,9 @@ export async function GET(request: Request) {
     const units = (await listRecords("units", { organization_id: user.organizationId }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)))
       .map(({ id, name }) => ({ id, name }));
-    return NextResponse.json({ units });
+    const response = NextResponse.json({ units });
+    response.headers.set("Cache-Control", "private, max-age=300, stale-while-revalidate=900");
+    return response;
   } catch (error) {
     return handleApiError(error);
   }

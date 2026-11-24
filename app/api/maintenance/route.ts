@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       return user.role === "admin" || asset.owner_uid === user.uid || sharedWithUids.includes(user.uid);
     }).map((asset) => [asset.id, asset]));
     const people = new Map(users.map((person) => [person.id, person]));
-    return NextResponse.json({
+    const response = NextResponse.json({
       plans: plans.filter((plan) => visibleAssets.has(String(plan.asset_id)))
         .sort((a, b) => String(visibleAssets.get(String(a.asset_id))?.next_maintenance ?? "").localeCompare(String(visibleAssets.get(String(b.asset_id))?.next_maintenance ?? "")))
         .map((plan) => {
@@ -29,6 +29,8 @@ export async function GET(request: Request) {
           };
         }),
     });
+    response.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=180");
+    return response;
   } catch (error) {
     return handleApiError(error);
   }

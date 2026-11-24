@@ -4,10 +4,18 @@ import { ApiError, getFirestoreDb, getSessionUser, handleApiError, listRecords, 
 export const runtime = "nodejs";
 const excludedStatuses = new Set(["Baixado", "Descartado", "Descartados"]);
 const dayMs = 86_400_000;
+const notificationCache = new Map<string, { savedAt: number; data: { alerts: Record<string, unknown>[]; preferences: { inApp: number; emailEnabled: number }; externalDeliveryConfigured: boolean } }>();
+const notificationCacheTtlMs = 60_000;
 
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser(request);
+    const cached = notificationCache.get(user.uid);
+    if (cached && Date.now() - cached.savedAt < notificationCacheTtlMs) {
+      const response = NextResponse.json(cached.data);
+      response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+      return response;
+    }
     const [assets, plans, users, preference] = await Promise.all([
       listRecords("assets", { organization_id: user.organizationId }),
       listRecords("maintenance_plans"),
@@ -69,11 +77,15 @@ export async function GET(request: Request) {
       }
     }
     const preferences = preference.exists ? preference.data() : undefined;
-    return NextResponse.json({
+    const data = {
       alerts,
       preferences: preferences ? { inApp: preferences.in_app ? 1 : 0, emailEnabled: preferences.email_enabled ? 1 : 0 } : { inApp: 1, emailEnabled: 0 },
       externalDeliveryConfigured: Boolean(process.env.EMAIL_PROVIDER_API_KEY),
-    });
+    };
+    notificationCache.set(user.uid, { savedAt: Date.now(), data });
+    const response = NextResponse.json(data);
+    response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    return response;
   } catch (error) {
     return handleApiError(error);
   }
@@ -88,6 +100,7 @@ export async function PATCH(request: Request) {
     await getFirestoreDb().collection("notification_preferences").doc(user.uid).set({
       user_uid: user.uid, in_app: body.inApp, email_enabled: body.emailEnabled, updated_at: nowIso(),
     }, { merge: true });
+    notificationCache.delete(user.uid);
     await writeAudit(user.organizationId, user.uid, "notifications.updated", "user", user.uid);
     return NextResponse.json({ ok: true });
   } catch (error) {

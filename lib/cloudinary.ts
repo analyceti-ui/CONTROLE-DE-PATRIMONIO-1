@@ -46,13 +46,13 @@ export function privateImageUrl(publicId: string) {
 }
 
 export async function fetchPrivateImage(publicId: string) {
-  const response = await fetch(privateImageUrl(publicId), { cache: "no-store" });
+  const response = await fetch(privateImageUrl(publicId), { cache: "force-cache" });
   if (!response.ok) throw new ApiError(502, "Não foi possível carregar a imagem armazenada.");
   return new Response(response.body, {
     status: 200,
     headers: {
       "Content-Type": response.headers.get("content-type") ?? "application/octet-stream",
-      "Cache-Control": "private, no-store",
+      "Cache-Control": "private, max-age=300, stale-while-revalidate=900",
       "X-Content-Type-Options": "nosniff",
     },
   });

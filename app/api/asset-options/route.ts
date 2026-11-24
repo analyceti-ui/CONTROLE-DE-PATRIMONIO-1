@@ -15,10 +15,12 @@ export async function GET(request: Request) {
       listRecords("asset_categories", { organization_id: user.organizationId }),
       listRecords("asset_statuses", { organization_id: user.organizationId }),
     ]);
-    return NextResponse.json({
+    const response = NextResponse.json({
       categories: [...defaults.categories, ...categories.map(({ name }) => String(name)).filter((name) => !defaults.categories.includes(name))],
       statuses: [...defaults.statuses, ...statuses.map(({ name }) => String(name)).filter((name) => !defaults.statuses.includes(name))],
     });
+    response.headers.set("Cache-Control", "private, max-age=300, stale-while-revalidate=900");
+    return response;
   } catch (error) {
     return handleApiError(error);
   }
