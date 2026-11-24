@@ -314,6 +314,7 @@ export default function DashboardPage({ section }: { section: string }) {
   const [assetEditForm, setAssetEditForm] = useState<AssetEditForm | null>(null);
   const [transferAsset, setTransferAsset] = useState<Asset | null>(null);
   const [transferForm, setTransferForm] = useState({ toUid: "", notes: "", photos: [] as File[] });
+  const [transferExtraPhotos, setTransferExtraPhotos] = useState<Record<string, File[]>>({});
   const [scanning, setScanning] = useState(false);
   const [scannerError, setScannerError] = useState("");
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
@@ -903,6 +904,29 @@ export default function DashboardPage({ section }: { section: string }) {
     setNotice("");
     setTransferAsset(asset);
     setTransferForm({ toUid: asset.ownerUid, notes: "", photos: [] });
+  }
+
+  async function addTransferPhotos(event: FormEvent<HTMLFormElement>, transferId: string) {
+    event.preventDefault();
+    if (!selectedQrAsset) return;
+    const photos = transferExtraPhotos[transferId] ?? [];
+    if (!photos.length) return;
+    const body = new FormData();
+    photos.forEach((photo) => body.append("photos", photo));
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await responseData(await api(`/api/assets/${selectedQrAsset.id}/transfers/${transferId}/photos`, { method: "POST", body }));
+      setTransferExtraPhotos((current) => ({ ...current, [transferId]: [] }));
+      const details = await responseData<{ transfers: AssetTransfer[] }>(await api(`/api/assets/${selectedQrAsset.id}`));
+      setAssetTransfers(details.transfers);
+      setNotice("Fotos adicionadas ao registro da entrega ou transferência.");
+    } catch (photoError) {
+      setError(photoError instanceof Error ? photoError.message : "Não foi possível adicionar as fotos.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitTransfer(event: FormEvent<HTMLFormElement>) {
@@ -2117,6 +2141,10 @@ export default function DashboardPage({ section }: { section: string }) {
                       {transfer.photos.length > 0 && <div className="transfer-photo-grid">{transfer.photos.map((photo) => <div className="transfer-photo" key={photo.id}>
                         <Image src={`/api/assets/${selectedQrAsset.id}/transfers/${transfer.id}/photos/${photo.id}`} alt={`Foto da ${transfer.fromUid ? "transferência" : "entrega inicial"} para ${transfer.toName}`} fill sizes="(max-width: 720px) 50vw, 150px" unoptimized />
                       </div>)}</div>}
+                      {profile?.role === "admin" && <form className="transfer-extra-photo-form" onSubmit={(event) => addTransferPhotos(event, transfer.id)}>
+                        <label>Adicionar mais fotos<input key={`transfer-extra-${transfer.id}-${transferExtraPhotos[transfer.id]?.length ?? 0}`} type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => setTransferExtraPhotos((current) => ({ ...current, [transfer.id]: Array.from(event.target.files ?? []) }))} /><small>{transferExtraPhotos[transfer.id]?.length ? `${transferExtraPhotos[transfer.id].length} foto(s) selecionada(s)` : "JPG, PNG ou WebP · até 6 fotos por vez"}</small></label>
+                        <button className="button button-primary compact-button" type="submit" disabled={busy || !(transferExtraPhotos[transfer.id]?.length)}>Adicionar fotos</button>
+                      </form>}
                     </article>)}
                   </div> : !loadingAssetDetails && <p className="form-help">Nenhuma entrega formal foi registrada. Registre a primeira entrega para iniciar o histórico.</p>}
                 </section>}
