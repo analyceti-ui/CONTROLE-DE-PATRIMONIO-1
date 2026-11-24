@@ -362,9 +362,64 @@ export default function DashboardPage({ section }: { section: string }) {
     });
   }, []);
 
-  const loadData = useCallback(async () => {
+  const DASHBOARD_CACHE_KEY = "patrimonio-dashboard-cache-v1";
+  const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
+
+  const loadData = useCallback(async (forceRefresh = true) => {
     setError("");
     try {
+      if (typeof window !== "undefined") {
+        const cachedText = window.sessionStorage.getItem(DASHBOARD_CACHE_KEY);
+        if (cachedText) {
+          try {
+            const cached = JSON.parse(cachedText) as {
+              savedAt: number;
+              profile: Profile | null;
+              assets: Asset[];
+              users: User[];
+              orders: ServiceOrder[];
+              inventory: InventoryItem[];
+              purchaseRequests: PurchaseRequest[];
+              inspections: Inspection[];
+              reportTotals: typeof reportTotals;
+              inAppNotifications: boolean;
+              emailNotifications: boolean;
+              notificationAlerts: NotificationAlert[];
+              units: Unit[];
+              maintenancePlans: MaintenancePlan[];
+              auditEntries: AuditEntry[];
+              organization: { id: string; name: string } | null;
+              assetCategories: string[];
+              assetStatuses: string[];
+            };
+            const cacheIsFresh = Date.now() - cached.savedAt < DASHBOARD_CACHE_TTL_MS;
+            if (cached.profile) {
+              setProfile(cached.profile);
+              setAssets(cached.assets);
+              setUsers(cached.users);
+              setOrders(cached.orders);
+              setInventory(cached.inventory);
+              setPurchaseRequests(cached.purchaseRequests);
+              setInspections(cached.inspections);
+              setReportTotals(cached.reportTotals);
+              setInAppNotifications(cached.inAppNotifications);
+              setEmailNotifications(cached.emailNotifications);
+              setNotificationAlerts(cached.notificationAlerts);
+              notificationKeysRef.current = new Set(cached.notificationAlerts.map(getNotificationKey));
+              setUnits(cached.units);
+              setMaintenancePlans(cached.maintenancePlans);
+              setAuditEntries(cached.auditEntries);
+              setOrganization(cached.organization);
+              setAssetCategories(cached.assetCategories);
+              setAssetStatuses(cached.assetStatuses);
+              setLoading(false);
+              if (!forceRefresh && cacheIsFresh) return;
+            }
+          } catch {
+            window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
+          }
+        }
+      }
       const profileData = await responseData<Profile>(await api("/api/auth/profile"));
       setProfile(profileData);
       if (profileData.mustChangePassword) {
@@ -441,6 +496,7 @@ export default function DashboardPage({ section }: { section: string }) {
         setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
         setOrganization(null);
       }
+
       const requestedAssetId = section === "assets"
         ? new URLSearchParams(window.location.search).get("asset")
         : null;
@@ -458,11 +514,35 @@ export default function DashboardPage({ section }: { section: string }) {
     } finally {
       setLoading(false);
     }
-  }, [api, router, section]);
+  }, [api, router, section, DASHBOARD_CACHE_KEY, DASHBOARD_CACHE_TTL_MS]);
 
   useEffect(() => {
-    void loadData();
+    void loadData(false);
   }, [loadData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || loading || !profile) return;
+    window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      profile,
+      assets,
+      users,
+      orders,
+      inventory,
+      purchaseRequests,
+      inspections,
+      reportTotals,
+      inAppNotifications,
+      emailNotifications,
+      notificationAlerts,
+      units,
+      maintenancePlans,
+      auditEntries,
+      organization,
+      assetCategories,
+      assetStatuses,
+    }));
+  }, [loading, profile, assets, users, orders, inventory, purchaseRequests, inspections, reportTotals, inAppNotifications, emailNotifications, notificationAlerts, units, maintenancePlans, auditEntries, organization, assetCategories, assetStatuses]);
 
   const profileUid = profile?.uid;
   useEffect(() => {
