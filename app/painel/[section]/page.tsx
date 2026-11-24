@@ -6,6 +6,7 @@ const sections = new Set([
   "maintenance",
   "orders",
   "inspections",
+  "fuel",
   "inventory",
   "purchases",
   "reports",
