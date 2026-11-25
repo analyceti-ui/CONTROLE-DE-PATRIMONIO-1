@@ -20,6 +20,7 @@ npm run dev
 Variáveis obrigatórias do servidor:
 
 - `SUPABASE_DB_URL` (string do pooler Supabase, com TLS)
+- `SUPABASE_DB_SSL_CERT` (opcional; certificado raiz baixado em Database Settings > SSL configuration para validar a identidade TLS do servidor)
 - `CLOUDINARY_CLOUD_NAME`
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
@@ -52,7 +53,7 @@ O comando `--apply` cria a tabela base se necessário e se recusa a inserir dado
 ## Publicação na Vercel
 
 1. Importe este repositório como um projeto Next.js na Vercel.
-2. Cadastre `SUPABASE_DB_URL`, as variáveis Cloudinary e as variáveis bootstrap do primeiro administrador nas configurações de Environment Variables da Vercel para cada ambiente necessário. A string do banco contém senha: mantenha-a apenas nas configurações secretas do servidor, nunca no navegador nem no repositório.
+2. Cadastre `SUPABASE_DB_URL`, opcionalmente `SUPABASE_DB_SSL_CERT`, as variáveis Cloudinary e as variáveis bootstrap do primeiro administrador nas configurações de Environment Variables da Vercel para cada ambiente necessário. Baixe o certificado raiz em Supabase **Database Settings > SSL configuration** para validar a identidade TLS. A string do banco contém senha: mantenha-a apenas nas configurações secretas do servidor, nunca no navegador nem no repositório.
 3. Execute a migração do schema e confirme que a função Vercel consegue conectar ao pooler Supabase.
 4. Publique. Todas as APIs usam runtime Node.js; nenhum banco ou arquivo persistente é criado no filesystem da função.
 

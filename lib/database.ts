@@ -1,4 +1,4 @@
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from "pg";
 import { ApiError } from "@/lib/errors";
 
 type JsonRecord = Record<string, unknown>;
@@ -13,13 +13,21 @@ function getPool() {
   if (!connectionString) {
     throw new ApiError(503, "Supabase não está configurado. Defina SUPABASE_DB_URL nas variáveis de ambiente do servidor.");
   }
-  pool = new Pool({
+  const config: PoolConfig = {
     connectionString,
     max: 1,
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 10_000,
     statement_timeout: 15_000,
-  });
+  };
+  const sslCertificate = process.env.SUPABASE_DB_SSL_CERT;
+  if (sslCertificate) {
+    const url = new URL(connectionString);
+    url.searchParams.delete("sslmode");
+    config.connectionString = url.toString();
+    config.ssl = { ca: sslCertificate, rejectUnauthorized: true };
+  }
+  pool = new Pool(config);
   return pool;
 }
 
