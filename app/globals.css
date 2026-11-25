@@ -168,6 +168,11 @@ td { padding: 11px 14px; border-top: 1px solid #eff2f0; color: #65716b; font-siz
 .photo-lightbox { position: relative; width: min(92vw, 980px); height: min(82vh, 760px); border-radius: 8px; overflow: hidden; background: #111713; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
 .photo-lightbox img { object-fit: contain; }
 .photo-lightbox-close { position: absolute; top: 10px; right: 10px; z-index: 2; width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255,255,255,.94); color: #1d2b27; font-size: 24px; line-height: 30px; cursor: pointer; }
+.asset-photo-grid .asset-photo { min-height: 180px; padding-bottom: 74px; }
+.asset-photo-grid .asset-photo figcaption { bottom: 74px; z-index: 1; }
+.asset-photo-grid .asset-photo-actions { position: absolute; right: 0; bottom: 0; left: 0; z-index: 2; display: grid; gap: 4px; padding: 6px; background: var(--surface); }
+.asset-photo-grid .asset-photo-actions .compact-button { min-height: 28px; padding: 4px 6px; font-size: 10px; }
+.asset-photo-grid .asset-photo-actions .badge { display: block; padding: 4px; text-align: center; }
 .fuel-page-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
 .fuel-asset-list { display: grid; align-content: start; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .fuel-asset-option { display: grid; gap: 3px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; text-align: left; cursor: pointer; }
@@ -260,6 +265,10 @@ td { padding: 11px 14px; border-top: 1px solid #eff2f0; color: #65716b; font-siz
 
 .button-secondary { border: 1px solid #dfe5e1; color: #426253; background: #fff; }
 .button-secondary:hover { background: #f2f7f3; }
+.button-danger { border: 1px solid #e8c8c4; color: #a44f48; background: #fff; }
+.button-danger:hover:not(:disabled) { background: #fbefed; }
+.dashboard-page[data-theme="dark"] .button-danger { border-color: #70403d; color: #edaaa4; background: #2e2524; }
+.dashboard-page[data-theme="dark"] .button-danger:hover:not(:disabled) { background: #422e2c; }
 
 .topbar-actions { display: flex; align-items: center; gap: 12px; }
 .notification-control { position: relative; }

@@ -181,6 +181,8 @@ function auditActionLabel(action: string) {
     "asset.updated": "Equipamento atualizado",
     "asset.deleted": "Equipamento excluído",
     "asset.photo_added": "Fotos adicionadas",
+    "asset.photo_cover_updated": "Foto de capa atualizada",
+    "asset.photo_deleted": "Foto do equipamento excluída",
     "asset.delivery_recorded": "Entrega registrada",
     "asset.transferred": "Equipamento transferido",
     "vehicle.fueled": "Abastecimento registrado",
@@ -310,6 +312,7 @@ export default function DashboardPage({ section }: { section: string }) {
   const [loadingAssetDetails, setLoadingAssetDetails] = useState(false);
   const [equipmentPhotoFiles, setEquipmentPhotoFiles] = useState<File[]>([]);
   const [equipmentPhotoCaption, setEquipmentPhotoCaption] = useState("");
+  const [photoAction, setPhotoAction] = useState<string | null>(null);
   const selectedQrAssetId = selectedQrAsset?.id;
   const selectedQrAssetCategory = selectedQrAsset?.category;
   const selectedQrAssetVehicleKm = selectedQrAsset?.vehicleKm;
@@ -1087,6 +1090,45 @@ export default function DashboardPage({ section }: { section: string }) {
       await loadData();
     } catch (photoError) {
       setError(photoError instanceof Error ? photoError.message : "Não foi possível salvar as fotos.");
+    }
+  }
+
+  async function setEquipmentCover(photo: AssetPhoto) {
+    if (!selectedQrAsset || photo.id === selectedQrAsset.coverPhotoId) return;
+    setPhotoAction(`cover:${photo.id}`);
+    setError("");
+    try {
+      await responseData(await api(`/api/assets/${selectedQrAsset.id}/photos/${photo.id}`, { method: "PATCH" }));
+      setSelectedQrAsset((current) => current?.id === selectedQrAsset.id ? { ...current, coverPhotoId: photo.id } : current);
+      setNotice("Foto de capa atualizada.");
+      await loadData();
+    } catch (photoError) {
+      setError(photoError instanceof Error ? photoError.message : "Não foi possível atualizar a foto de capa.");
+    } finally {
+      setPhotoAction(null);
+    }
+  }
+
+  async function deleteEquipmentPhoto(photo: AssetPhoto) {
+    if (!selectedQrAsset || !window.confirm("Excluir esta foto permanentemente do equipamento e do Cloudinary?")) return;
+    const remainingPhotos = assetPhotos
+      .filter((item) => item.id !== photo.id)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const nextCoverId = selectedQrAsset.coverPhotoId === photo.id
+      ? remainingPhotos[0]?.id ?? null
+      : selectedQrAsset.coverPhotoId;
+    setPhotoAction(`delete:${photo.id}`);
+    setError("");
+    try {
+      await responseData(await api(`/api/assets/${selectedQrAsset.id}/photos/${photo.id}`, { method: "DELETE" }));
+      setAssetPhotos(remainingPhotos);
+      setSelectedQrAsset((current) => current?.id === selectedQrAsset.id ? { ...current, coverPhotoId: nextCoverId } : current);
+      setNotice("Foto do equipamento excluída.");
+      await loadData();
+    } catch (photoError) {
+      setError(photoError instanceof Error ? photoError.message : "Não foi possível excluir a foto.");
+    } finally {
+      setPhotoAction(null);
     }
   }
 
@@ -2259,6 +2301,12 @@ export default function DashboardPage({ section }: { section: string }) {
                     {assetPhotos.map((photo) => <figure className="asset-photo" key={photo.id}>
                       <Image src={`/api/assets/${selectedQrAsset.id}/photos/${photo.id}`} alt={photo.caption || `Foto de ${selectedQrAsset.name}`} fill sizes="(max-width: 720px) 50vw, 180px" unoptimized />
                       {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                      <div className="asset-photo-actions">
+                        {selectedQrAsset.coverPhotoId === photo.id
+                          ? <span className="badge badge-green">Foto de capa</span>
+                          : <button className="button button-secondary compact-button" type="button" disabled={photoAction !== null} onClick={() => void setEquipmentCover(photo)}>{photoAction === `cover:${photo.id}` ? "Atualizando..." : "Definir como capa"}</button>}
+                        <button className="button button-danger compact-button" type="button" disabled={photoAction !== null} onClick={() => void deleteEquipmentPhoto(photo)}>{photoAction === `delete:${photo.id}` ? "Excluindo..." : "Excluir foto"}</button>
+                      </div>
                     </figure>)}
                   </div> : <p className="form-help">Ainda não há fotos gerais cadastradas.</p>}
                   <form className="asset-upload-form" onSubmit={addEquipmentPhotos}>

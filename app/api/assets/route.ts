@@ -33,8 +33,9 @@ export async function GET(request: Request) {
         const person = ownerMap.get(uid);
         return person ? String(person.display_name || person.email) : uid;
       });
-      const cover = photos.filter((photo) => photo.asset_id === asset.id)
-        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
+      const assetPhotos = photos.filter((photo) => photo.asset_id === asset.id)
+        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      const cover = assetPhotos.find((photo) => photo.id === asset.cover_photo_id) ?? assetPhotos[0];
       const visibleAsset = user.role === "admin" ? asset : {
         ...asset,
         purchase_date: "",
