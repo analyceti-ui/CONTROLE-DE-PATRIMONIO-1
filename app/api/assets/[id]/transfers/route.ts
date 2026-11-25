@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { readImageUploads } from "@/lib/asset-photos";
-import { ApiError, getFirestoreDb, getSessionUser, handleApiError, nowIso, requireAdmin, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getSessionUser, handleApiError, nowIso, requireAdmin, writeAssetHistory, writeAudit } from "@/lib/api";
 import { deleteImage, uploadImage } from "@/lib/cloudinary";
 
 export const runtime = "nodejs";
@@ -20,7 +20,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (!toUid) throw new ApiError(400, "Selecione o usuário que está recebendo o equipamento.");
     if (!notes || notes.length > 2000) throw new ApiError(400, "Descreva as condições da entrega (até 2.000 caracteres).");
     const photos = await readImageUploads(form);
-    const db = getFirestoreDb();
+    const db = getDatabase();
     const transferId = randomUUID();
     const timestamp = nowIso();
     for (const photo of photos) {

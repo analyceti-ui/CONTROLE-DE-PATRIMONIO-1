@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { createId, createSession, createUserRecord, deleteSession, getFirestoreDb, handleApiError, readJson, recordFailedLogin, clearLoginAttempts, sessionCookie, verifyPassword, hashPassword, nowIso } from "@/lib/api";
+import { createId, createSession, createUserRecord, deleteSession, getDatabase, handleApiError, readJson, recordFailedLogin, clearLoginAttempts, sessionCookie, verifyPassword, hashPassword, nowIso } from "@/lib/api";
 
 export const runtime = "nodejs";
 
 async function findUser(email: string): Promise<(Record<string, unknown> & { id: string }) | undefined> {
-  const db = getFirestoreDb();
+  const db = getDatabase();
   const matches = await db.collection("users").where("email", "==", email).limit(1).get();
   if (!matches.empty) return { id: matches.docs[0].id, ...matches.docs[0].data() } as Record<string, unknown> & { id: string };
 

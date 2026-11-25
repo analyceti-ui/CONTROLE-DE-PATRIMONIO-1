@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { ApiError, deleteRecords, getFirebaseAuth, getFirestoreDb, getRecord, getSessionUser, handleApiError, readJson, requireAdmin, writeAudit } from "@/lib/api";
+import { ApiError, deleteRecords, getDatabase, getRecord, getSessionUser, handleApiError, hashPassword, readJson, requireAdmin, writeAudit } from "@/lib/api";
+import { hasValidPermissionDependencies, isUserPermissions } from "@/lib/permissions";
 
 type RouteContext = { params: Promise<{ uid: string }> };
 export const runtime = "nodejs";
@@ -10,7 +11,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     requireAdmin(requester);
     const { uid } = await context.params;
     const body = await readJson(request);
-    const db = getFirestoreDb();
+    const db = getDatabase();
     const target = await getRecord("users", uid);
     if (!target || target.organization_id !== requester.organizationId) throw new ApiError(404, "Usuário não encontrado.");
     if (typeof body.role === "string" && body.role !== "admin" && body.role !== "user") {
@@ -19,39 +20,19 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (body.active !== undefined && typeof body.active !== "boolean") {
       throw new ApiError(400, "O estado da conta deve ser ativo ou inativo.");
     }
-    if (body.role === undefined && body.active === undefined && body.password === undefined) {
-      throw new ApiError(400, "Informe um perfil, estado ou nova senha.");
+    if (body.permissions !== undefined && !isUserPermissions(body.permissions)) {
+      throw new ApiError(400, "As permissões informadas são inválidas.");
+    }
+    if (isUserPermissions(body.permissions) && !hasValidPermissionDependencies(body.permissions)) {
+      throw new ApiError(400, "Para liberar preventivas, ordens, inspeções ou abastecimento, conceda ao menos visualização de Equipamentos.");
+    }
+    if (body.role === undefined && body.active === undefined && body.password === undefined && body.permissions === undefined) {
+      throw new ApiError(400, "Informe um perfil, estado, senha ou permissões.");
     }
     if (uid === requester.uid && body.active === false) throw new ApiError(400, "Você não pode desativar sua própria conta.");
     if (body.password !== undefined && (typeof body.password !== "string" ||
       body.password.length < 8 || body.password.length > 128)) {
       throw new ApiError(400, "Informe uma nova senha válida.");
-    }
-
-    const firebaseAuth = await getFirebaseAuth();
-    let firebaseUid = typeof target.auth_uid === "string" ? target.auth_uid : "";
-    if (!firebaseUid) {
-      try {
-        firebaseUid = (await firebaseAuth.getUserByEmail(String(target.email))).uid;
-      } catch (error) {
-        if (!(typeof error === "object" && error !== null && "code" in error && error.code === "auth/user-not-found")) {
-          throw error;
-        }
-      }
-    }
-    if (firebaseUid) {
-      const authUpdates: { password?: string; disabled?: boolean } = {};
-      if (typeof body.password === "string") authUpdates.password = body.password;
-      if (typeof body.active === "boolean") authUpdates.disabled = !body.active;
-      if (Object.keys(authUpdates).length) await firebaseAuth.updateUser(firebaseUid, authUpdates);
-    } else if (typeof body.password === "string") {
-      const created = await firebaseAuth.createUser({
-        email: String(target.email),
-        password: body.password,
-        displayName: String(target.display_name || ""),
-        disabled: body.active === false || target.active === false,
-      });
-      firebaseUid = created.uid;
     }
 
     await db.runTransaction(async (transaction) => {
@@ -71,8 +52,9 @@ export async function PATCH(request: Request, context: RouteContext) {
       const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (body.role === "admin" || body.role === "user") updates.role = body.role;
       if (typeof body.active === "boolean") updates.active = body.active;
-      if (firebaseUid) updates.auth_uid = firebaseUid;
+      if (isUserPermissions(body.permissions)) updates.permissions = body.permissions;
       if (typeof body.password === "string") {
+        updates.password_hash = hashPassword(body.password);
         updates.must_change_password = true;
       }
       transaction.update(currentSnap.ref, updates);
@@ -80,6 +62,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (body.active === false || body.password !== undefined) await deleteRecords("sessions", "user_uid", uid);
     await writeAudit(requester.organizationId, requester.uid, "user.updated", "user", uid, {
       role: body.role, active: body.active, passwordReset: body.password !== undefined,
+      permissionsUpdated: body.permissions !== undefined,
     });
     return NextResponse.json({ ok: true });
   } catch (error) {

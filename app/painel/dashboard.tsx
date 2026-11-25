@@ -1,10 +1,19 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { fuelTypes } from "@/lib/fuel";
 import type { UserRole } from "@/lib/api";
+import {
+  canAccessSection,
+  defaultUserPermissions,
+  permissionSections,
+  type PermissionLevel,
+  type PermissionSection,
+  type UserPermissions,
+} from "@/lib/permissions";
 
 type Asset = {
   id: string;
@@ -50,8 +59,8 @@ type AssetEditForm = {
   sharedWithUids: string[];
 };
 
-type Profile = { uid: string; email: string; displayName: string; role: UserRole; organizationId: string; mustChangePassword: boolean };
-type User = { uid: string; email: string; displayName: string; role: UserRole; active: number; mustChangePassword: number };
+type Profile = { uid: string; email: string; displayName: string; role: UserRole; organizationId: string; mustChangePassword: boolean; permissions?: UserPermissions };
+type User = { uid: string; email: string; displayName: string; role: UserRole; active: number; mustChangePassword: number; permissions: UserPermissions | null };
 type ServiceOrder = {
   id: string;
   asset_id: string;
@@ -88,6 +97,56 @@ type AuditEntry = {
   entity_id: string;
   details_json: string;
 };
+type FleetAuditAsset = {
+  id: string;
+  name: string;
+  category: string;
+  tag: string;
+  location: string;
+  status: string;
+  ownerUid: string;
+  ownerName: string;
+  ownerEmail: string;
+  sharedWith: { uid: string; name: string }[];
+  unitName: string;
+  vehicleKm: number | null;
+};
+type FleetAuditFuelRecord = {
+  id: string;
+  assetId: string;
+  assetName: string;
+  assetTag: string;
+  location: string;
+  ownerUid: string;
+  ownerName: string;
+  sharedWithUids: string[];
+  recordedByUid: string;
+  recordedByName: string;
+  odometerKm: number;
+  previousOdometerKm: number;
+  distanceKm: number;
+  amount: number;
+  fuelType: string;
+  createdAt: string;
+};
+type FleetAuditServiceOrder = {
+  id: string;
+  assetId: string;
+  assetName: string;
+  assetTag: string;
+  location: string;
+  ownerUid: string;
+  ownerName: string;
+  sharedWithUids: string[];
+  description: string;
+  kind: string;
+  status: string;
+  laborCost: number;
+  partsCost: number;
+  createdAt: string;
+  completedAt: string;
+};
+type FleetAuditFilters = { startDate: string; endDate: string; assetId: string; ownerUid: string; fuelType: string };
 type NotificationAlert = {
   assetId: string;
   assetName: string;
@@ -120,6 +179,7 @@ type VehicleFuelRecord = {
   previousOdometerKm: number;
   distanceKm: number;
   amount: number;
+  fuelType: string;
   odometerPhotoType: string;
   receiptPhotoType: string;
   createdAt: string;
@@ -147,6 +207,11 @@ function getNotificationKey(alert: NotificationAlert) {
       ? alert.currentValue >= alert.dueValue ? "overdue" : "upcoming"
       : "";
   return `${alert.kind}:${alert.assetId}:${alert.dueDate ?? alert.dueValue ?? ""}:${phase}`;
+}
+
+function getPermissionSection(section: string): PermissionSection | null {
+  const normalized = section.startsWith("settings-") ? "settings" : section;
+  return permissionSections.some(({ id }) => id === normalized) ? normalized as PermissionSection : null;
 }
 
 function playNotificationTone(context: AudioContext | null) {
@@ -181,6 +246,8 @@ function auditActionLabel(action: string) {
     "asset.updated": "Equipamento atualizado",
     "asset.deleted": "Equipamento excluído",
     "asset.photo_added": "Fotos adicionadas",
+    "asset.photo_cover_updated": "Foto de capa atualizada",
+    "asset.photo_deleted": "Foto do equipamento excluída",
     "asset.delivery_recorded": "Entrega registrada",
     "asset.transferred": "Equipamento transferido",
     "vehicle.fueled": "Abastecimento registrado",
@@ -229,6 +296,28 @@ function auditDetailsLabel(rawDetails: string) {
   }
 }
 
+function exportCsv(filename: string, headers: string[], rows: unknown[][]) {
+  const cell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const contents = `\uFEFF${[headers, ...rows].map((row) => row.map(cell).join(";")).join("\r\n")}`;
+  const url = URL.createObjectURL(new Blob([contents], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Data não informada"
+    : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date);
+}
+
 export default function DashboardPage({ section }: { section: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -240,6 +329,8 @@ export default function DashboardPage({ section }: { section: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [permissionEditorFor, setPermissionEditorFor] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<UserPermissions>(defaultUserPermissions);
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [orderFields, setOrderFields] = useState<Record<string, OrderFields>>({});
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -257,8 +348,20 @@ export default function DashboardPage({ section }: { section: string }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [externalDeliveryConfigured, setExternalDeliveryConfigured] = useState(false);
   const [organization, setOrganization] = useState<{ id: string; name: string } | null>(null);
+  const [overviewTotals, setOverviewTotals] = useState({ count: 0, inUse: 0 });
   const [reportTotals, setReportTotals] = useState({ count: 0, purchaseCost: 0, inUse: 0, inMaintenance: 0, withoutOwner: 0 });
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [fleetAuditAssets, setFleetAuditAssets] = useState<FleetAuditAsset[]>([]);
+  const [fleetAuditFuelRecords, setFleetAuditFuelRecords] = useState<FleetAuditFuelRecord[]>([]);
+  const [fleetAuditServiceOrders, setFleetAuditServiceOrders] = useState<FleetAuditServiceOrder[]>([]);
+  const [auditTab, setAuditTab] = useState<"activity" | "fleet">("activity");
+  const [fleetAuditFilters, setFleetAuditFilters] = useState<FleetAuditFilters>({
+    startDate: "",
+    endDate: "",
+    assetId: "all",
+    ownerUid: "all",
+    fuelType: "all",
+  });
   const [inAppNotifications, setInAppNotifications] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -302,14 +405,19 @@ export default function DashboardPage({ section }: { section: string }) {
   const [assetTransfers, setAssetTransfers] = useState<AssetTransfer[]>([]);
   const [fuelRecords, setFuelRecords] = useState<VehicleFuelRecord[]>([]);
   const [vehicleMaintenanceHistory, setVehicleMaintenanceHistory] = useState<VehicleMaintenanceRecord[]>([]);
-  const [fuelForm, setFuelForm] = useState({ odometerKm: "", amount: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
+  const [fuelForm, setFuelForm] = useState({ odometerKm: "", amount: "", fuelType: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
   const [fuelAssetId, setFuelAssetId] = useState("");
-  const [dedicatedFuelForm, setDedicatedFuelForm] = useState({ odometerKm: "", amount: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
+  const [dedicatedFuelForm, setDedicatedFuelForm] = useState({ odometerKm: "", amount: "", fuelType: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
   const [dedicatedFuelRecords, setDedicatedFuelRecords] = useState<VehicleFuelRecord[]>([]);
+  const [fuelTypeFilter, setFuelTypeFilter] = useState("all");
   const [savingFuel, setSavingFuel] = useState(false);
   const [loadingAssetDetails, setLoadingAssetDetails] = useState(false);
   const [equipmentPhotoFiles, setEquipmentPhotoFiles] = useState<File[]>([]);
   const [equipmentPhotoCaption, setEquipmentPhotoCaption] = useState("");
+  const [photoAction, setPhotoAction] = useState<string | null>(null);
+  const selectedQrAssetId = selectedQrAsset?.id;
+  const selectedQrAssetCategory = selectedQrAsset?.category;
+  const selectedQrAssetVehicleKm = selectedQrAsset?.vehicleKm;
   const [newAssetPhotoFiles, setNewAssetPhotoFiles] = useState<File[]>([]);
   const [newAssetPhotoCaption, setNewAssetPhotoCaption] = useState("");
   const [newAssetOpen, setNewAssetOpen] = useState(false);
@@ -333,7 +441,6 @@ export default function DashboardPage({ section }: { section: string }) {
     name: "",
     email: "",
     password: "",
-    role: "user" as UserRole,
   });
   const [form, setForm] = useState({
     name: "",
@@ -366,70 +473,11 @@ export default function DashboardPage({ section }: { section: string }) {
     });
   }, []);
 
-  const DASHBOARD_CACHE_KEY = "patrimonio-dashboard-cache-v1";
-  const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
-
-  const loadData = useCallback(async (forceRefresh = true) => {
+  const loadData = useCallback(async () => {
     if (loadDataRunningRef.current) return;
     loadDataRunningRef.current = true;
     setError("");
     try {
-      if (typeof window !== "undefined") {
-        const cachedText = window.sessionStorage.getItem(DASHBOARD_CACHE_KEY);
-        if (cachedText) {
-          try {
-            const cached = JSON.parse(cachedText) as {
-              savedAt: number;
-              profile: Profile | null;
-              assets: Asset[];
-              users: User[];
-              orders: ServiceOrder[];
-              inventory: InventoryItem[];
-              purchaseRequests: PurchaseRequest[];
-              inspections: Inspection[];
-              reportTotals: typeof reportTotals;
-              inAppNotifications: boolean;
-              emailNotifications: boolean;
-              notificationAlerts: NotificationAlert[];
-              units: Unit[];
-              maintenancePlans: MaintenancePlan[];
-              auditEntries: AuditEntry[];
-              organization: { id: string; name: string } | null;
-              assetCategories: string[];
-              assetStatuses: string[];
-            };
-            const cacheIsFresh = Date.now() - cached.savedAt < DASHBOARD_CACHE_TTL_MS;
-            if (cached.profile) {
-              setProfile(cached.profile);
-              setAssets(cached.assets);
-              setUsers(cached.users);
-              setOrders(cached.orders);
-              setInventory(cached.inventory);
-              setPurchaseRequests(cached.purchaseRequests);
-              setInspections(cached.inspections);
-              setReportTotals(cached.reportTotals);
-              setInAppNotifications(cached.inAppNotifications);
-              setEmailNotifications(cached.emailNotifications);
-              setNotificationAlerts(cached.notificationAlerts);
-              notificationKeysRef.current = new Set(cached.notificationAlerts.map(getNotificationKey));
-              setUnits(cached.units);
-              setMaintenancePlans(cached.maintenancePlans);
-              setAuditEntries(cached.auditEntries);
-              setOrganization(cached.organization);
-              setAssetCategories(cached.assetCategories);
-              setAssetStatuses(cached.assetStatuses);
-              setLoading(false);
-              if (!forceRefresh && cacheIsFresh) {
-                loadDataRunningRef.current = false;
-                return;
-              }
-            }
-          } catch {
-            window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
-          }
-        }
-      }
-
       const profileData = await responseData<Profile>(await api("/api/auth/profile"));
       setProfile(profileData);
       if (profileData.mustChangePassword) {
@@ -440,11 +488,27 @@ export default function DashboardPage({ section }: { section: string }) {
         setLoading(false);
         return;
       }
+      const protectedSection = ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(section);
+      const legacyRoleRestrictedSection = !profileData.permissions && ["orders", "inventory"].includes(section);
+      if (profileData.role !== "admin" && (protectedSection || legacyRoleRestrictedSection)) {
+        setLoading(false);
+        return;
+      }
+      const currentPermissionSection = getPermissionSection(section);
+      if (profileData.role !== "admin" && profileData.permissions &&
+        (!currentPermissionSection || !canAccessSection(profileData.permissions, currentPermissionSection, "view"))) {
+        setLoading(false);
+        return;
+      }
 
-      if (section === "assets" || section === "overview" || section === "reports" || section === "fuel") {
+      if (section === "assets" || section === "fuel") {
         const assetResponse = await api("/api/assets");
         const assetData = await responseData<{ items: Asset[] }>(assetResponse);
         setAssets(assetData.items);
+      }
+
+      if (section === "overview") {
+        setOverviewTotals(await responseData<{ count: number; inUse: number }>(await api("/api/assets?summary=1")));
       }
 
       if (section === "assets") {
@@ -455,15 +519,16 @@ export default function DashboardPage({ section }: { section: string }) {
         setUnits((await responseData<{ units: Unit[] }>(unitsResponse)).units);
       }
 
-      if (section === "overview" || section === "maintenance") {
-        const [notificationResponse, maintenanceResponse] = await Promise.all([api("/api/notifications"), api("/api/maintenance")]);
-        const notificationData = await responseData<{ preferences: { inApp: number; emailEnabled: number }; alerts: NotificationAlert[]; externalDeliveryConfigured: boolean }>(notificationResponse);
+      if (section === "overview" || section === "maintenance" || section === "settings-notifications") {
+        const notificationData = await responseData<{ preferences: { inApp: number; emailEnabled: number }; alerts: NotificationAlert[]; externalDeliveryConfigured: boolean }>(await api("/api/notifications"));
         setInAppNotifications(Boolean(notificationData.preferences.inApp));
         setEmailNotifications(Boolean(notificationData.preferences.emailEnabled));
         setNotificationAlerts(notificationData.alerts);
         notificationKeysRef.current = new Set(notificationData.alerts.map(getNotificationKey));
         setExternalDeliveryConfigured(notificationData.externalDeliveryConfigured);
-        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(maintenanceResponse)).plans);
+        if (section === "maintenance") {
+          setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
+        }
       }
 
       if (section === "orders") {
@@ -485,15 +550,22 @@ export default function DashboardPage({ section }: { section: string }) {
       if (section === "reports") {
         setReportTotals((await responseData<{ totals: typeof reportTotals }>(await api("/api/reports"))).totals);
       }
-      if (section === "fuel") {
-        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
-      }
       if (profileData.role === "admin" && (section === "users" || section === "settings" || section === "overview" || section === "audit")) {
         if (section === "users" || section === "settings" || section === "overview") {
           setUsers((await responseData<{ users: User[] }>(await api("/api/users"))).users);
         }
         if (section === "audit") {
-          setAuditEntries((await responseData<{ entries: AuditEntry[] }>(await api("/api/audit"))).entries);
+          const [auditResponse, fleetResponse] = await Promise.all([api("/api/audit"), api("/api/audit/fleet")]);
+          const auditData = await responseData<{ entries: AuditEntry[] }>(auditResponse);
+          const fleetData = await responseData<{
+            assets: FleetAuditAsset[];
+            fuelRecords: FleetAuditFuelRecord[];
+            serviceOrders: FleetAuditServiceOrder[];
+          }>(fleetResponse);
+          setAuditEntries(auditData.entries);
+          setFleetAuditAssets(fleetData.assets);
+          setFleetAuditFuelRecords(fleetData.fuelRecords);
+          setFleetAuditServiceOrders(fleetData.serviceOrders);
         }
         if (section === "settings") {
           const [optionsResponse, unitsResponse, organizationResponse] = await Promise.all([api("/api/asset-options"), api("/api/units"), api("/api/organizations")]);
@@ -513,10 +585,10 @@ export default function DashboardPage({ section }: { section: string }) {
       loadDataRunningRef.current = false;
       setLoading(false);
     }
-  }, [api, router, section, DASHBOARD_CACHE_KEY, DASHBOARD_CACHE_TTL_MS]);
+  }, [api, router, section]);
 
   useEffect(() => {
-    void loadData(false);
+    void loadData();
   }, [loadData]);
 
   useEffect(() => {
@@ -527,30 +599,6 @@ export default function DashboardPage({ section }: { section: string }) {
     setNotificationOpen(false);
     router.replace("/painel/assets", { scroll: false });
   }, [assets, loading, requestedAssetId, router, section]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || loading || !profile) return;
-    window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
-      savedAt: Date.now(),
-      profile,
-      assets,
-      users,
-      orders,
-      inventory,
-      purchaseRequests,
-      inspections,
-      reportTotals,
-      inAppNotifications,
-      emailNotifications,
-      notificationAlerts,
-      units,
-      maintenancePlans,
-      auditEntries,
-      organization,
-      assetCategories,
-      assetStatuses,
-    }));
-  }, [loading, profile, assets, users, orders, inventory, purchaseRequests, inspections, reportTotals, inAppNotifications, emailNotifications, notificationAlerts, units, maintenancePlans, auditEntries, organization, assetCategories, assetStatuses]);
 
   const profileUid = profile?.uid;
   useEffect(() => {
@@ -677,6 +725,7 @@ export default function DashboardPage({ section }: { section: string }) {
     const body = new FormData();
     body.set("odometerKm", fuelForm.odometerKm);
     body.set("amount", fuelForm.amount);
+    body.set("fuelType", fuelForm.fuelType);
     body.set("odometerPhoto", fuelForm.odometerPhoto);
     body.set("receiptPhoto", fuelForm.receiptPhoto);
     try {
@@ -686,6 +735,7 @@ export default function DashboardPage({ section }: { section: string }) {
       setFuelForm({
         odometerKm: String(result.odometerKm),
         amount: "",
+        fuelType: "",
         odometerPhoto: null,
         receiptPhoto: null,
       });
@@ -719,13 +769,14 @@ export default function DashboardPage({ section }: { section: string }) {
     const body = new FormData();
     body.set("odometerKm", dedicatedFuelForm.odometerKm);
     body.set("amount", dedicatedFuelForm.amount);
+    body.set("fuelType", dedicatedFuelForm.fuelType);
     body.set("odometerPhoto", dedicatedFuelForm.odometerPhoto);
     body.set("receiptPhoto", dedicatedFuelForm.receiptPhoto);
     try {
       const result = await responseData<{ odometerKm: number; previousOdometerKm: number; distanceKm: number }>(
         await api(`/api/assets/${asset.id}/fuel`, { method: "POST", body }),
       );
-      setDedicatedFuelForm({ odometerKm: String(result.odometerKm), amount: "", odometerPhoto: null, receiptPhoto: null });
+      setDedicatedFuelForm({ odometerKm: String(result.odometerKm), amount: "", fuelType: "", odometerPhoto: null, receiptPhoto: null });
       const history = await responseData<{ records: VehicleFuelRecord[] }>(await api(`/api/assets/${asset.id}/fuel`));
       setDedicatedFuelRecords(history.records);
       await loadData();
@@ -739,7 +790,7 @@ export default function DashboardPage({ section }: { section: string }) {
 
   useEffect(() => {
     const adminSettings = ["settings-equipment", "settings-organization", "settings-backup"];
-    if (profile && profile.role !== "admin" && (["users", "audit", "orders", "inventory"].includes(section) || adminSettings.includes(section))) {
+    if (profile && profile.role !== "admin" && (["users", "audit"].includes(section) || adminSettings.includes(section))) {
       router.replace("/painel");
     }
   }, [profile, router, section]);
@@ -798,12 +849,12 @@ export default function DashboardPage({ section }: { section: string }) {
   }, [assets, scanning]);
 
   useEffect(() => {
-    if (!selectedQrAsset) {
+    if (!selectedQrAssetId) {
       setAssetPhotos([]);
       setAssetTransfers([]);
       setFuelRecords([]);
       setVehicleMaintenanceHistory([]);
-      setFuelForm({ odometerKm: "", amount: "", odometerPhoto: null, receiptPhoto: null });
+      setFuelForm({ odometerKm: "", amount: "", fuelType: "", odometerPhoto: null, receiptPhoto: null });
       setEquipmentPhotoFiles([]);
       setEquipmentPhotoCaption("");
       return;
@@ -812,15 +863,16 @@ export default function DashboardPage({ section }: { section: string }) {
     setLoadingAssetDetails(true);
     setEquipmentPhotoFiles([]);
     setEquipmentPhotoCaption("");
-    if (selectedQrAsset.category === "Veículo") {
+    if (selectedQrAssetCategory === "Veículo") {
       setFuelForm({
-        odometerKm: String(selectedQrAsset.vehicleKm ?? ""),
+        odometerKm: String(selectedQrAssetVehicleKm ?? ""),
         amount: "",
+        fuelType: "",
         odometerPhoto: null,
         receiptPhoto: null,
       });
     }
-    const detailRequest = api(`/api/assets/${selectedQrAsset.id}`)
+    const detailRequest = api(`/api/assets/${selectedQrAssetId}`)
       .then((response) => responseData<{
         asset: {
           shared_with_uids?: string[];
@@ -833,7 +885,7 @@ export default function DashboardPage({ section }: { section: string }) {
         if (!active) return;
         const sharedWithUids = Array.isArray(data.asset.shared_with_uids) ? data.asset.shared_with_uids.map(String) : [];
         const sharedWithNames = Array.isArray(data.asset.shared_with_names) ? data.asset.shared_with_names.map(String) : [];
-        setSelectedQrAsset((current) => current ? {
+        setSelectedQrAsset((current) => current?.id === selectedQrAssetId ? {
           ...current,
           sharedWithUids,
           sharedWithNames,
@@ -841,8 +893,8 @@ export default function DashboardPage({ section }: { section: string }) {
         setAssetPhotos(data.photos);
         setAssetTransfers(data.transfers);
       });
-    const fuelRequest = selectedQrAsset.category === "Veículo"
-      ? api(`/api/assets/${selectedQrAsset.id}/fuel`)
+    const fuelRequest = selectedQrAssetCategory === "Veículo"
+      ? api(`/api/assets/${selectedQrAssetId}/fuel`)
         .then((response) => responseData<{
           records: VehicleFuelRecord[];
           maintenanceHistory: VehicleMaintenanceRecord[];
@@ -868,7 +920,7 @@ export default function DashboardPage({ section }: { section: string }) {
     return () => {
       active = false;
     };
-  }, [api, selectedQrAsset]);
+  }, [api, selectedQrAssetCategory, selectedQrAssetId, selectedQrAssetVehicleKm]);
 
   const filteredAssets = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -900,6 +952,20 @@ export default function DashboardPage({ section }: { section: string }) {
     const usable = !["baixado", "descartado"].includes(status);
     return usable && (eligibleCategory || eligibleName);
   }), [assets]);
+  const fuelSpendingByType = useMemo(() => {
+    const spending = new Map<string, { amount: number; count: number }>();
+    for (const record of dedicatedFuelRecords) {
+      const current = spending.get(record.fuelType) ?? { amount: 0, count: 0 };
+      spending.set(record.fuelType, { amount: current.amount + record.amount, count: current.count + 1 });
+    }
+    return [...spending.entries()]
+      .map(([fuelType, totals]) => ({ fuelType, ...totals }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [dedicatedFuelRecords]);
+  const filteredDedicatedFuelRecords = useMemo(
+    () => fuelTypeFilter === "all" ? dedicatedFuelRecords : dedicatedFuelRecords.filter((record) => record.fuelType === fuelTypeFilter),
+    [dedicatedFuelRecords, fuelTypeFilter],
+  );
 
   const preventiveNotifications = notificationAlerts.filter((alert) => alert.kind !== "warranty");
   const preventiveAlertCount = preventiveNotifications.length;
@@ -921,6 +987,64 @@ export default function DashboardPage({ section }: { section: string }) {
     return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
   }).length;
   const auditActionTypes = [...new Set(auditEntries.map((entry) => entry.action))];
+  const fleetAuditUsers = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const asset of fleetAuditAssets) {
+      if (asset.ownerUid) names.set(asset.ownerUid, asset.ownerName || asset.ownerEmail || "Usuário");
+      for (const sharedUser of asset.sharedWith) {
+        if (sharedUser.uid) names.set(sharedUser.uid, sharedUser.name || "Usuário compartilhado");
+      }
+    }
+    return [...names.entries()].map(([uid, name]) => ({ uid, name })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  }, [fleetAuditAssets]);
+  const filteredFleetAuditAssets = useMemo(
+    () => fleetAuditAssets.filter((asset) =>
+      (fleetAuditFilters.assetId === "all" || asset.id === fleetAuditFilters.assetId) &&
+      (fleetAuditFilters.ownerUid === "all" || asset.ownerUid === fleetAuditFilters.ownerUid ||
+        asset.sharedWith.some((sharedUser) => sharedUser.uid === fleetAuditFilters.ownerUid)),
+    ),
+    [fleetAuditAssets, fleetAuditFilters.assetId, fleetAuditFilters.ownerUid],
+  );
+  const filteredFleetFuelRecords = useMemo(() => fleetAuditFuelRecords.filter((record) => {
+    const recordDate = record.createdAt.slice(0, 10);
+    const assignedToUser = record.ownerUid === fleetAuditFilters.ownerUid ||
+      record.sharedWithUids.includes(fleetAuditFilters.ownerUid);
+    return (!fleetAuditFilters.startDate || recordDate >= fleetAuditFilters.startDate) &&
+      (!fleetAuditFilters.endDate || recordDate <= fleetAuditFilters.endDate) &&
+      (fleetAuditFilters.assetId === "all" || record.assetId === fleetAuditFilters.assetId) &&
+      (fleetAuditFilters.ownerUid === "all" || assignedToUser) &&
+      (fleetAuditFilters.fuelType === "all" || record.fuelType === fleetAuditFilters.fuelType);
+  }), [fleetAuditFilters, fleetAuditFuelRecords]);
+  const filteredFleetServiceOrders = useMemo(() => fleetAuditServiceOrders.filter((order) => {
+    if (order.status !== "Concluída") return false;
+    const orderDate = (order.completedAt || order.createdAt).slice(0, 10);
+    const assignedToUser = order.ownerUid === fleetAuditFilters.ownerUid ||
+      order.sharedWithUids.includes(fleetAuditFilters.ownerUid);
+    return (!fleetAuditFilters.startDate || orderDate >= fleetAuditFilters.startDate) &&
+      (!fleetAuditFilters.endDate || orderDate <= fleetAuditFilters.endDate) &&
+      (fleetAuditFilters.assetId === "all" || order.assetId === fleetAuditFilters.assetId) &&
+      (fleetAuditFilters.ownerUid === "all" || assignedToUser);
+  }), [fleetAuditFilters, fleetAuditServiceOrders]);
+  const fleetFuelTotal = filteredFleetFuelRecords.reduce((sum, record) => sum + record.amount, 0);
+  const fleetMaintenanceTotal = filteredFleetServiceOrders.reduce((sum, order) => sum + order.laborCost + order.partsCost, 0);
+  const fleetFuelByType = useMemo(() => {
+    const totals = new Map<string, { amount: number; count: number }>();
+    for (const record of filteredFleetFuelRecords) {
+      const current = totals.get(record.fuelType) ?? { amount: 0, count: 0 };
+      totals.set(record.fuelType, { amount: current.amount + record.amount, count: current.count + 1 });
+    }
+    return [...totals.entries()].map(([fuelType, values]) => ({ fuelType, ...values })).sort((a, b) => b.amount - a.amount);
+  }, [filteredFleetFuelRecords]);
+  const fleetFuelByAsset = useMemo(() => {
+    const totals = new Map<string, { name: string; tag: string; location: string; ownerName: string; amount: number; count: number }>();
+    for (const record of filteredFleetFuelRecords) {
+      const current = totals.get(record.assetId) ?? {
+        name: record.assetName, tag: record.assetTag, location: record.location, ownerName: record.ownerName, amount: 0, count: 0,
+      };
+      totals.set(record.assetId, { ...current, amount: current.amount + record.amount, count: current.count + 1 });
+    }
+    return [...totals.entries()].map(([assetId, values]) => ({ assetId, ...values })).sort((a, b) => b.amount - a.amount);
+  }, [filteredFleetFuelRecords]);
   const sectionTitles: Record<string, string> = {
     overview: "Visão geral",
     assets: "Equipamentos",
@@ -1087,6 +1211,45 @@ export default function DashboardPage({ section }: { section: string }) {
     }
   }
 
+  async function setEquipmentCover(photo: AssetPhoto) {
+    if (!selectedQrAsset || photo.id === selectedQrAsset.coverPhotoId) return;
+    setPhotoAction(`cover:${photo.id}`);
+    setError("");
+    try {
+      await responseData(await api(`/api/assets/${selectedQrAsset.id}/photos/${photo.id}`, { method: "PATCH" }));
+      setSelectedQrAsset((current) => current?.id === selectedQrAsset.id ? { ...current, coverPhotoId: photo.id } : current);
+      setNotice("Foto de capa atualizada.");
+      await loadData();
+    } catch (photoError) {
+      setError(photoError instanceof Error ? photoError.message : "Não foi possível atualizar a foto de capa.");
+    } finally {
+      setPhotoAction(null);
+    }
+  }
+
+  async function deleteEquipmentPhoto(photo: AssetPhoto) {
+    if (!selectedQrAsset || !window.confirm("Excluir esta foto permanentemente do equipamento e do Cloudinary?")) return;
+    const remainingPhotos = assetPhotos
+      .filter((item) => item.id !== photo.id)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const nextCoverId = selectedQrAsset.coverPhotoId === photo.id
+      ? remainingPhotos[0]?.id ?? null
+      : selectedQrAsset.coverPhotoId;
+    setPhotoAction(`delete:${photo.id}`);
+    setError("");
+    try {
+      await responseData(await api(`/api/assets/${selectedQrAsset.id}/photos/${photo.id}`, { method: "DELETE" }));
+      setAssetPhotos(remainingPhotos);
+      setSelectedQrAsset((current) => current?.id === selectedQrAsset.id ? { ...current, coverPhotoId: nextCoverId } : current);
+      setNotice("Foto do equipamento excluída.");
+      await loadData();
+    } catch (photoError) {
+      setError(photoError instanceof Error ? photoError.message : "Não foi possível excluir a foto.");
+    } finally {
+      setPhotoAction(null);
+    }
+  }
+
   function beginEditAsset(asset: Asset) {
     setAssetEditForm({
       name: asset.name,
@@ -1167,6 +1330,31 @@ export default function DashboardPage({ section }: { section: string }) {
     }
   }
 
+  function togglePermissionEditor(user: User) {
+    if (permissionEditorFor === user.uid) {
+      setPermissionEditorFor(null);
+      return;
+    }
+    setPermissionDraft(user.permissions ?? defaultUserPermissions);
+    setPermissionEditorFor(user.uid);
+  }
+
+  async function saveUserPermissions(user: User) {
+    setError("");
+    setNotice("");
+    try {
+      await responseData(await api(`/api/users/${user.uid}`, {
+        method: "PATCH",
+        body: JSON.stringify({ permissions: permissionDraft }),
+      }));
+      setPermissionEditorFor(null);
+      setNotice(`Permissões de ${user.email} atualizadas.`);
+      await loadData();
+    } catch (permissionError) {
+      setError(permissionError instanceof Error ? permissionError.message : "Não foi possível salvar as permissões.");
+    }
+  }
+
   async function addUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreatingUser(true);
@@ -1177,7 +1365,7 @@ export default function DashboardPage({ section }: { section: string }) {
         method: "POST",
         body: JSON.stringify(newUser),
       }));
-      setNewUser({ name: "", email: "", password: "", role: "user" });
+      setNewUser({ name: "", email: "", password: "" });
       setRecordFormOpen((previous) => ({ ...previous, users: false }));
       setNotice("Acesso criado. Compartilhe o e-mail e a senha inicial com o usuário.");
       await loadData();
@@ -1349,13 +1537,17 @@ export default function DashboardPage({ section }: { section: string }) {
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError("");
+    setNotice("");
     try {
       await responseData(await api("/api/users", {
         method: "PATCH",
         body: JSON.stringify(passwordForm),
       }));
       setPasswordForm({ currentPassword: "", newPassword: "" });
-      await logout();
+      setProfile((current) => current ? { ...current, mustChangePassword: false } : current);
+      setNotice("Senha alterada com sucesso.");
+      await loadData();
     } catch (passwordError) {
       setError(passwordError instanceof Error ? passwordError.message : "Não foi possível alterar a senha.");
     }
@@ -1453,8 +1645,63 @@ export default function DashboardPage({ section }: { section: string }) {
   }
 
   async function logout() {
+    window.sessionStorage.removeItem("patrimonio-dashboard-cache-v1");
     await api("/api/auth", { method: "DELETE" });
     router.replace("/");
+  }
+
+  function renderPermissionEditor(user: User) {
+    if (permissionEditorFor !== user.uid) return null;
+    return <div className="permission-editor">
+      <div className="permission-grid">
+        {permissionSections.filter(({ id }) => id !== "users" && id !== "audit").map(({ id, label }) => (
+          <label key={id}>{label}
+            <select
+              aria-label={`Permissão de ${user.email} para ${label}`}
+              value={permissionDraft[id]}
+              onChange={(event) => setPermissionDraft((current) => {
+                const level = event.target.value as PermissionLevel;
+                const next = { ...current, [id]: level };
+                const assetLinked: PermissionSection[] = ["maintenance", "orders", "inspections", "fuel"];
+                if (id === "assets" && level === "none") {
+                  for (const linkedSection of assetLinked) next[linkedSection] = "none";
+                } else if (assetLinked.includes(id) && level !== "none" && next.assets === "none") {
+                  next.assets = "view";
+                }
+                return next;
+              })}
+            >
+              <option value="none">Sem acesso</option>
+              <option value="view">Somente visualizar</option>
+              <option value="edit">Visualizar e editar</option>
+            </select>
+          </label>
+        ))}
+      </div>
+      <small className="form-help">Preventivas, ordens, inspeções e abastecimento dependem de ao menos visualização de Equipamentos.</small>
+      <small className="form-help">Usuários, auditoria e configurações administrativas continuam exclusivos de administradores.</small>
+      {user.permissions === null && <small className="form-help">Esta conta ainda usa as permissões antigas. Salvar aplicará as permissões selecionadas.</small>}
+      <div className="inline-actions">
+        <button className="button button-primary compact-button" type="button" onClick={() => void saveUserPermissions(user)}>Salvar permissões</button>
+        <button className="button button-secondary compact-button" type="button" onClick={() => setPermissionEditorFor(null)}>Cancelar</button>
+      </div>
+    </div>;
+  }
+
+  function canView(target: string) {
+    const targetSection = getPermissionSection(target);
+    if (profile?.role === "admin") return true;
+    if (!profile || ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(target)) return false;
+    if (!profile.permissions) return target !== "orders" && target !== "inventory";
+    return Boolean(targetSection && canAccessSection(profile.permissions, targetSection, "view"));
+  }
+
+  function canEdit(target: string) {
+    const targetSection = getPermissionSection(target);
+    if (profile?.role === "admin") return true;
+    if (!profile || ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(target)) return false;
+    if (!profile.permissions) return canView(target);
+    return Boolean(targetSection && canAccessSection(profile.permissions, targetSection, "edit"));
   }
 
   if (loading) {
@@ -1482,25 +1729,36 @@ export default function DashboardPage({ section }: { section: string }) {
     );
   }
 
-  if (profile && profile.role !== "admin" && ["orders", "inventory", "users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(section)) {
+  if (profile && profile.role !== "admin" && ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(section)) {
     return <main className="loading-screen"><span className="spinner" /> Redirecionando para o painel...</main>;
   }
 
+  if (profile && !canView(section)) {
+    return <main className="loading-screen permission-denied">
+      <section className="permission-denied-card">
+        <span className="eyebrow">ACESSO RESTRITO</span>
+        <h1>Você não tem acesso a esta tela</h1>
+        <p>Peça ao administrador para ajustar suas permissões.</p>
+        <button className="button button-secondary" type="button" onClick={() => void logout()}>Sair da conta</button>
+      </section>
+    </main>;
+  }
+
   return (
-    <main className="dashboard-page" data-theme={darkMode ? "dark" : "light"}>
+    <main className="dashboard-page" data-theme={darkMode ? "dark" : "light"} data-can-edit={canEdit(section)}>
       <aside className="sidebar">
         <Link className="brand" href="/painel"><span className="brand-mark">P</span> patrimônio</Link>
         <div className="side-label">MENU PRINCIPAL</div>
-        <Link className={`side-link ${section === "overview" ? "active" : ""}`} href="/painel"><span>▦</span> Visão geral</Link>
-        <Link className={`side-link ${section === "assets" ? "active" : ""}`} href="/painel/assets"><span>◫</span> Equipamentos</Link>
-        <Link className={`side-link alert-nav ${section === "maintenance" ? "active" : ""}`} href="/painel/maintenance"><span>♢</span> Preventivas{preventiveNotifications.length > 0 && <b className="nav-count">{preventiveNotifications.length}</b>}</Link>
-        {profile?.role === "admin" && <Link className={`side-link ${section === "orders" ? "active" : ""}`} href="/painel/orders"><span>⚒</span> Ordens</Link>}
-        <Link className={`side-link ${section === "inspections" ? "active" : ""}`} href="/painel/inspections"><span>✓</span> Inspeções</Link>
-        <Link className={`side-link ${section === "fuel" ? "active" : ""}`} href="/painel/fuel"><span>⛽</span> Abastecimento</Link>
-        {profile?.role === "admin" && <Link className={`side-link ${section === "inventory" ? "active" : ""}`} href="/painel/inventory"><span>▤</span> Estoque</Link>}
-        <Link className={`side-link ${section === "purchases" ? "active" : ""}`} href="/painel/purchases"><span>▣</span> Compras</Link>
-        <Link className={`side-link ${section === "reports" ? "active" : ""}`} href="/painel/reports"><span>▧</span> Relatórios</Link>
-        <Link className={`side-link ${section === "settings" || section.startsWith("settings-") ? "active" : ""}`} href="/painel/settings"><span>⚙</span> Configurações</Link>
+        {canView("overview") && <Link className={`side-link ${section === "overview" ? "active" : ""}`} href="/painel"><span>▦</span> Visão geral</Link>}
+        {canView("assets") && <Link className={`side-link ${section === "assets" ? "active" : ""}`} href="/painel/assets"><span>◫</span> Equipamentos</Link>}
+        {canView("maintenance") && <Link className={`side-link alert-nav ${section === "maintenance" ? "active" : ""}`} href="/painel/maintenance"><span>♢</span> Preventivas{preventiveNotifications.length > 0 && <b className="nav-count">{preventiveNotifications.length}</b>}</Link>}
+        {canView("orders") && <Link className={`side-link ${section === "orders" ? "active" : ""}`} href="/painel/orders"><span>⚒</span> Ordens</Link>}
+        {canView("inspections") && <Link className={`side-link ${section === "inspections" ? "active" : ""}`} href="/painel/inspections"><span>✓</span> Inspeções</Link>}
+        {canView("fuel") && <Link className={`side-link ${section === "fuel" ? "active" : ""}`} href="/painel/fuel"><span>⛽</span> Abastecimento</Link>}
+        {canView("inventory") && <Link className={`side-link ${section === "inventory" ? "active" : ""}`} href="/painel/inventory"><span>▤</span> Estoque</Link>}
+        {canView("purchases") && <Link className={`side-link ${section === "purchases" ? "active" : ""}`} href="/painel/purchases"><span>▣</span> Compras</Link>}
+        {canView("reports") && <Link className={`side-link ${section === "reports" ? "active" : ""}`} href="/painel/reports"><span>▧</span> Relatórios</Link>}
+        {canView("settings") && <Link className={`side-link ${section === "settings" || section.startsWith("settings-") ? "active" : ""}`} href="/painel/settings"><span>⚙</span> Configurações</Link>}
         {profile?.role === "admin" && <>
           <Link className={`side-link ${section === "users" ? "active" : ""}`} href="/painel/users"><span>♙</span> Usuários</Link>
           <Link className={`side-link ${section === "audit" ? "active" : ""}`} href="/painel/audit"><span>◷</span> Auditoria</Link>
@@ -1580,13 +1838,14 @@ export default function DashboardPage({ section }: { section: string }) {
             <span className="today-date">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(new Date())}</span>
           </div>
 
+          {!canEdit(section) && <div className="notice read-only-notice" role="status">Modo somente visualização. Você não pode alterar informações nesta tela.</div>}
           {error && <div className="notice error-notice" role="alert">{error}</div>}
           {notice && <div className="notice success-notice" role="status">{notice}</div>}
 
           {section === "overview" && <div className="stats-grid">
-            <article className="stat-card"><span className="stat-icon blue">▦</span><span className="stat-label">ATIVOS CADASTRADOS</span><strong>{assets.length}</strong><small>Itens sob acompanhamento</small></article>
+            <article className="stat-card"><span className="stat-icon blue">▦</span><span className="stat-label">ATIVOS CADASTRADOS</span><strong>{overviewTotals.count}</strong><small>Itens sob acompanhamento</small></article>
             <article className="stat-card"><span className="stat-icon amber">◷</span><span className="stat-label">AVISOS DE PREVENTIVA</span><strong>{preventiveAlertCount}</strong><small>Por data, km ou horas de uso</small></article>
-            <article className="stat-card"><span className="stat-icon green">✓</span><span className="stat-label">EM USO</span><strong>{assets.filter((asset) => asset.status === "Em uso").length}</strong><small>Ativos em operação</small></article>
+            <article className="stat-card"><span className="stat-icon green">✓</span><span className="stat-label">EM USO</span><strong>{overviewTotals.inUse}</strong><small>Ativos em operação</small></article>
             {profile?.role === "admin" && <article className="stat-card"><span className="stat-icon violet">♙</span><span className="stat-label">USUÁRIOS</span><strong>{users.length}</strong><small>Contas cadastradas</small></article>}
           </div>}
 
@@ -1617,16 +1876,20 @@ export default function DashboardPage({ section }: { section: string }) {
           {section === "fuel" && <section className="panel" id="abastecimento">
             <div className="panel-heading"><div><span className="eyebrow">COMBUSTÍVEL E QUILOMETRAGEM</span><h2>Abastecimento</h2><p>Registre o hodômetro, o valor pago e os comprovantes dos veículos autorizados.</p></div></div>
             {fuelAssets.length ? <div className="fuel-page-grid">
-              <aside className="fuel-asset-list"><strong>Selecionar equipamento</strong>{fuelAssets.map((asset) => <button type="button" key={asset.id} className={`fuel-asset-option ${fuelAssetId === asset.id ? "active" : ""}`} onClick={() => { setFuelAssetId(asset.id); const odometer = asset.vehicleKm ?? 0; setDedicatedFuelForm((current) => ({ ...current, odometerKm: String(odometer) })); }}><span>{asset.category}</span><strong>{asset.name}</strong><small>{asset.vehicleKm === null ? "Sem hodômetro" : `${asset.vehicleKm.toLocaleString("pt-BR")} km`}</small></button>)}</aside>
+              <aside className="fuel-asset-list"><strong>Selecionar equipamento</strong>{fuelAssets.map((asset) => <button type="button" key={asset.id} className={`fuel-asset-option ${fuelAssetId === asset.id ? "active" : ""}`} onClick={() => { setFuelAssetId(asset.id); setFuelTypeFilter("all"); const odometer = asset.vehicleKm ?? 0; setDedicatedFuelForm((current) => ({ ...current, odometerKm: String(odometer), fuelType: "" })); }}><span>{asset.category}</span><strong>{asset.name}</strong><small>{asset.vehicleKm === null ? "Sem hodômetro" : `${asset.vehicleKm.toLocaleString("pt-BR")} km`}</small></button>)}</aside>
               {fuelAssetId ? <div className="fuel-workspace">
                 {(() => { const asset = fuelAssets.find((item) => item.id === fuelAssetId); if (!asset) return null; return <><div className="fuel-selected-heading"><span>{asset.category}</span><h3>{asset.name}</h3><small>{asset.location || "Localização não informada"}</small></div><form className="fuel-record-form" onSubmit={submitDedicatedFuelRecord}>
                   <strong>Novo abastecimento</strong><div className="fuel-record-fields">
                     <label>Quilometragem atual (km)<input required type="number" min={asset.vehicleKm ?? 0} step="1" value={dedicatedFuelForm.odometerKm} onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, odometerKm: event.target.value })} /></label>
                     <label>Valor pago (R$)<input required type="number" min="0.01" max="1000000" step="0.01" value={dedicatedFuelForm.amount} onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, amount: event.target.value })} /></label>
+                    <label>Tipo de combustível<select required value={dedicatedFuelForm.fuelType} onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, fuelType: event.target.value })}><option value="">Selecione</option>{fuelTypes.map((fuelType) => <option key={fuelType} value={fuelType}>{fuelType}</option>)}</select></label>
                     <label>Foto do hodômetro<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, odometerPhoto: event.target.files?.[0] ?? null })} /><small>{dedicatedFuelForm.odometerPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
                     <label>Foto do cupom<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, receiptPhoto: event.target.files?.[0] ?? null })} /><small>{dedicatedFuelForm.receiptPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
-                  </div><button className="button button-primary compact-button" type="submit" disabled={savingFuel || !dedicatedFuelForm.odometerKm || !dedicatedFuelForm.amount || !dedicatedFuelForm.odometerPhoto || !dedicatedFuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
-                </form><div className="vehicle-history-block"><h4>Histórico de abastecimentos</h4>{dedicatedFuelRecords.length ? <div className="table-scroll"><table><thead><tr><th>DATA</th><th>HODÔMETRO</th><th>RODADO</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead><tbody>{dedicatedFuelRecords.map((record) => <tr key={record.id}><td>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(record.createdAt))}<small className="table-subtext">{record.userName}</small></td><td>{record.odometerKm.toLocaleString("pt-BR")} km</td><td>{record.distanceKm.toLocaleString("pt-BR")} km</td><td>R$ {record.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td><td><div className="inline-actions"><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/odometer`} target="_blank" rel="noreferrer">Hodômetro</a><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/receipt`} target="_blank" rel="noreferrer">Cupom</a></div></td></tr>)}</tbody></table></div> : <p className="form-help">Ainda não há abastecimentos registrados.</p>}</div></>; })()}
+                  </div><button className="button button-primary compact-button" type="submit" disabled={savingFuel || !dedicatedFuelForm.odometerKm || !dedicatedFuelForm.amount || !dedicatedFuelForm.fuelType || !dedicatedFuelForm.odometerPhoto || !dedicatedFuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
+                </form><div className="vehicle-history-block fuel-spending-block">
+                  <div className="fuel-spending-heading"><div><h4>Gastos por combustível</h4><small>Totais pagos neste equipamento, do maior para o menor.</small></div><label>Filtrar histórico<select aria-label="Filtrar histórico por combustível" value={fuelTypeFilter} onChange={(event) => setFuelTypeFilter(event.target.value)}><option value="all">Todos os combustíveis</option>{fuelSpendingByType.map((item) => <option key={item.fuelType} value={item.fuelType}>{item.fuelType}</option>)}</select></label></div>
+                  {fuelSpendingByType.length ? <div className="fuel-spending-grid">{fuelSpendingByType.map((item) => <article key={item.fuelType}><span>{item.fuelType}</span><strong>R$ {item.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong><small>{item.count} abastecimento(s)</small></article>)}</div> : <p className="form-help">Os gastos por combustível aparecerão após os primeiros registros.</p>}
+                </div><div className="vehicle-history-block"><h4>Histórico de abastecimentos</h4>{filteredDedicatedFuelRecords.length ? <div className="table-scroll"><table><thead><tr><th>DATA</th><th>COMBUSTÍVEL</th><th>HODÔMETRO</th><th>RODADO</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead><tbody>{filteredDedicatedFuelRecords.map((record) => <tr key={record.id}><td>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(record.createdAt))}<small className="table-subtext">{record.userName}</small></td><td>{record.fuelType}</td><td>{record.odometerKm.toLocaleString("pt-BR")} km</td><td>{record.distanceKm.toLocaleString("pt-BR")} km</td><td>R$ {record.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td><td><div className="inline-actions"><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/odometer`} target="_blank" rel="noreferrer">Hodômetro</a><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/receipt`} target="_blank" rel="noreferrer">Cupom</a></div></td></tr>)}</tbody></table></div> : <p className="form-help">{dedicatedFuelRecords.length ? "Nenhum abastecimento corresponde ao filtro selecionado." : "Ainda não há abastecimentos registrados."}</p>}</div></>; })()}
               </div> : <div className="empty-panel">Selecione um veículo, carro, ônibus, caminhão, trator ou gerador para registrar o abastecimento.</div>}
             </div> : <p className="empty-panel">Nenhum veículo, carro, ônibus, caminhão, trator ou gerador está vinculado à sua conta.</p>}
           </section>}
@@ -2023,7 +2286,7 @@ export default function DashboardPage({ section }: { section: string }) {
           {profile?.role === "admin" && section === "users" && (
             <section className="panel user-panel" id="usuarios">
               <div className="panel-heading">
-                <div><span className="eyebrow">ACESSOS</span><h2>Usuários</h2><p>Gerencie quem pode administrar o sistema.</p></div>
+                <div><span className="eyebrow">ACESSOS</span><h2>Usuários</h2><p>Gerencie perfis e defina quais telas cada usuário pode visualizar ou editar.</p></div>
                 <div className="record-tools">
                   <label className="search-box"><span>⌕</span><input value={recordQueries.users} onChange={(event) => setRecordQueries((previous) => ({ ...previous, users: event.target.value }))} placeholder="Buscar usuário..." aria-label="Buscar usuário" /></label>
                   <RecordViewToggle value={recordViews.users} onChange={(view) => changeRecordView("users", view)} label="usuários" />
@@ -2031,17 +2294,18 @@ export default function DashboardPage({ section }: { section: string }) {
                 </div>
               </div>
               {recordFormOpen.users && <form id="users-create-form" className="asset-form entry-form user-create-form" onSubmit={addUser}>
-                <div className="form-group-heading"><strong>Dados de acesso</strong><span>Crie uma conta e escolha se será usuário ou administrador.</span></div>
+                <div className="form-group-heading"><strong>Dados de acesso</strong><span>Crie uma conta de usuário para acessar o sistema.</span></div>
                 <label>Nome<input required maxLength={100} value={newUser.name} onChange={(event) => setNewUser({ ...newUser, name: event.target.value })} placeholder="Nome da pessoa" /></label>
                 <label>E-mail<input required type="email" maxLength={254} value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} placeholder="pessoa@empresa.com.br" /></label>
                 <label>Senha inicial<input required type="password" minLength={8} maxLength={128} autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} placeholder="Mínimo de 8 caracteres" /></label>
-                <label>Perfil<select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value as UserRole })}><option value="user">Usuário</option><option value="admin">Administrador</option></select></label>
+                <p className="form-help wide-field">A nova conta começa como Usuário, com permissões iniciais de acesso básico. Ajuste cada tela na lista após o cadastro.</p>
                 <button className="button button-primary add-button" type="submit" disabled={creatingUser}>{creatingUser ? "Criando..." : "+ Criar acesso"}</button>
               </form>}
               {recordViews.users === "list" ? <div className="table-scroll">
                 <table>
                   <thead><tr><th>USUÁRIO</th><th>E-MAIL</th><th>PERFIL</th><th>CONTA</th><th>AÇÕES</th></tr></thead>
                   <tbody>{users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).map((user) => (
+                    <Fragment key={user.uid}>
                     <tr key={user.uid}>
                       <td><div className="asset-name"><span className="avatar small">{(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span><strong>{user.displayName || "Sem nome"}</strong></div></td>
                       <td>{user.email}</td>
@@ -2054,14 +2318,18 @@ export default function DashboardPage({ section }: { section: string }) {
                       <td><div className="inline-actions">
                         {user.uid !== profile.uid && <button className="button button-secondary compact-button" type="button" onClick={() => void setUserActive(user, !user.active)}>{user.active ? "Desativar" : "Ativar"}</button>}
                         <button className="button button-secondary compact-button" type="button" onClick={() => void resetUserPassword(user)}>Redefinir senha</button>
+                        {user.role === "user" && <button className="button button-secondary compact-button" type="button" aria-expanded={permissionEditorFor === user.uid} onClick={() => togglePermissionEditor(user)}>{permissionEditorFor === user.uid ? "Fechar permissões" : "Permissões"}</button>}
                       </div></td>
                     </tr>
+                    {permissionEditorFor === user.uid && <tr key={`${user.uid}-permissions`}><td colSpan={5}>{renderPermissionEditor(user)}</td></tr>}
+                    </Fragment>
                   ))}{!users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).length && <tr><td colSpan={5} className="empty-cell">{users.length ? "Nenhum usuário corresponde à busca." : "Nenhum usuário cadastrado."}</td></tr>}</tbody>
                 </table>
               </div> : <div className="record-card-grid">{users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).map((user) => <article className="record-card" key={user.uid}>
                 <div className="record-card-heading"><div className="user-record-identity"><span className="avatar">{(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span><div><span className="eyebrow">{user.email}</span><h3>{user.displayName || "Sem nome"}</h3></div></div><span className={`badge ${user.active ? "badge-green" : "badge-neutral"}`}>{user.active ? "Ativa" : "Desativada"}</span></div>
                 <div className="record-card-user-role"><label>Perfil<select aria-label={`Perfil de ${user.email}`} value={user.role} disabled={user.uid === profile.uid && user.role === "admin"} onChange={(event) => void changeRole(user, event.target.value as UserRole)}><option value="user">Usuário</option><option value="admin">Administrador</option></select></label>{user.mustChangePassword === 1 && <small className="form-help">Senha inicial pendente</small>}</div>
-                <div className="inline-actions">{user.uid !== profile.uid && <button className="button button-secondary compact-button" type="button" onClick={() => void setUserActive(user, !user.active)}>{user.active ? "Desativar" : "Ativar"}</button>}<button className="button button-secondary compact-button" type="button" onClick={() => void resetUserPassword(user)}>Redefinir senha</button></div>
+                <div className="inline-actions">{user.uid !== profile.uid && <button className="button button-secondary compact-button" type="button" onClick={() => void setUserActive(user, !user.active)}>{user.active ? "Desativar" : "Ativar"}</button>}<button className="button button-secondary compact-button" type="button" onClick={() => void resetUserPassword(user)}>Redefinir senha</button>{user.role === "user" && <button className="button button-secondary compact-button" type="button" aria-expanded={permissionEditorFor === user.uid} onClick={() => togglePermissionEditor(user)}>{permissionEditorFor === user.uid ? "Fechar permissões" : "Permissões"}</button>}</div>
+                {renderPermissionEditor(user)}
               </article>)}{!users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).length && <p className="empty-panel">{users.length ? "Nenhum usuário corresponde à busca." : "Nenhum usuário cadastrado."}</p>}</div>}
             </section>
           )}
@@ -2150,10 +2418,10 @@ export default function DashboardPage({ section }: { section: string }) {
           </section>}
 
           {profile?.role === "admin" && section === "settings-backup" && <section className="panel settings-topic-page">
-            <div className="panel-heading"><div><span className="eyebrow">CONFIGURAÇÕES / DADOS</span><h2>Dados na nuvem</h2><p>Os dados do sistema são armazenados no Firebase Cloud Firestore e as imagens no Cloudinary.</p></div></div>
+            <div className="panel-heading"><div><span className="eyebrow">CONFIGURAÇÕES / DADOS</span><h2>Dados na nuvem</h2><p>Os dados do sistema são armazenados no PostgreSQL do Supabase e as imagens no Cloudinary.</p></div></div>
             <div className="settings-form backup-card settings-single-form">
               <strong className="form-section-title">Backups e restauração</strong>
-              <p>Backups SQLite locais foram desativados para evitar que os dados da Vercel sejam gravados no disco temporário. Para exportar ou restaurar dados, use as ferramentas de exportação/importação do Firebase Cloud Firestore. As imagens ficam gerenciadas na sua conta Cloudinary.</p>
+              <p>Backups SQLite locais foram desativados para evitar que os dados da Vercel sejam gravados no disco temporário. Para exportar ou restaurar dados, use as ferramentas de backup do Supabase. As imagens ficam gerenciadas na sua conta Cloudinary.</p>
               <p className="form-help">A restauração por arquivo SQLite não é compatível com o armazenamento em nuvem.</p>
             </div>
           </section>}
@@ -2216,18 +2484,20 @@ export default function DashboardPage({ section }: { section: string }) {
                     <div className="fuel-record-fields">
                       <label>Quilometragem atual (km)<input required type="number" min={selectedQrAsset.vehicleKm ?? 0} step="1" value={fuelForm.odometerKm} onChange={(event) => setFuelForm({ ...fuelForm, odometerKm: event.target.value })} /></label>
                       <label>Valor pago (R$)<input required type="number" min="0.01" max="1000000" step="0.01" value={fuelForm.amount} onChange={(event) => setFuelForm({ ...fuelForm, amount: event.target.value })} /></label>
+                      <label>Tipo de combustível<select required value={fuelForm.fuelType} onChange={(event) => setFuelForm({ ...fuelForm, fuelType: event.target.value })}><option value="">Selecione</option>{fuelTypes.map((fuelType) => <option key={fuelType} value={fuelType}>{fuelType}</option>)}</select></label>
                       <label>Foto do hodômetro<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFuelForm({ ...fuelForm, odometerPhoto: event.target.files?.[0] ?? null })} /><small>{fuelForm.odometerPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
                       <label>Foto do cupom<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFuelForm({ ...fuelForm, receiptPhoto: event.target.files?.[0] ?? null })} /><small>{fuelForm.receiptPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
                     </div>
-                    <button className="button button-primary compact-button" type="submit" disabled={savingFuel || !fuelForm.odometerKm || !fuelForm.amount || !fuelForm.odometerPhoto || !fuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
+                    <button className="button button-primary compact-button" type="submit" disabled={savingFuel || !fuelForm.odometerKm || !fuelForm.amount || !fuelForm.fuelType || !fuelForm.odometerPhoto || !fuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
                     <small className="form-help">Anexe exatamente uma foto do hodômetro e uma do cupom. As duas devem somar até 3,5 MB.</small>
                   </form>
                   <div className="vehicle-history-block">
                     <h4>Histórico de abastecimentos</h4>
                     {fuelRecords.length ? <div className="table-scroll"><table>
-                      <thead><tr><th>DATA</th><th>HODÔMETRO</th><th>RODADO DESDE O REGISTRO ANTERIOR</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead>
+                      <thead><tr><th>DATA</th><th>COMBUSTÍVEL</th><th>HODÔMETRO</th><th>RODADO DESDE O REGISTRO ANTERIOR</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead>
                       <tbody>{fuelRecords.map((record) => <tr key={record.id}>
                         <td>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(record.createdAt))}<small className="table-subtext">{record.userName}</small></td>
+                        <td>{record.fuelType}</td>
                         <td>{record.odometerKm.toLocaleString("pt-BR")} km</td>
                         <td>{record.distanceKm.toLocaleString("pt-BR")} km</td>
                         <td>R$ {record.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
@@ -2256,6 +2526,12 @@ export default function DashboardPage({ section }: { section: string }) {
                     {assetPhotos.map((photo) => <figure className="asset-photo" key={photo.id}>
                       <Image src={`/api/assets/${selectedQrAsset.id}/photos/${photo.id}`} alt={photo.caption || `Foto de ${selectedQrAsset.name}`} fill sizes="(max-width: 720px) 50vw, 180px" unoptimized />
                       {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                      <div className="asset-photo-actions">
+                        {selectedQrAsset.coverPhotoId === photo.id
+                          ? <span className="badge badge-green">Foto de capa</span>
+                          : <button className="button button-secondary compact-button" type="button" disabled={photoAction !== null} onClick={() => void setEquipmentCover(photo)}>{photoAction === `cover:${photo.id}` ? "Atualizando..." : "Definir como capa"}</button>}
+                        <button className="button button-danger compact-button" type="button" disabled={photoAction !== null} onClick={() => void deleteEquipmentPhoto(photo)}>{photoAction === `delete:${photo.id}` ? "Excluindo..." : "Excluir foto"}</button>
+                      </div>
                     </figure>)}
                   </div> : <p className="form-help">Ainda não há fotos gerais cadastradas.</p>}
                   <form className="asset-upload-form" onSubmit={addEquipmentPhotos}>
@@ -2329,40 +2605,86 @@ export default function DashboardPage({ section }: { section: string }) {
           {profile?.role === "admin" && section === "audit" && (
             <section className="panel" id="auditoria">
               <div className="panel-heading audit-heading">
-                <div><span className="eyebrow">SEGURANÇA E RASTREABILIDADE</span><h2>Auditoria do sistema</h2><p>Acompanhe alterações administrativas, responsáveis e registros afetados.</p></div>
+                <div><span className="eyebrow">GESTÃO, CUSTOS E RASTREABILIDADE</span><h2>Auditoria e frota</h2><p>Consulte atividades, custos operacionais, abastecimentos e responsabilidade por ativo.</p></div>
+              </div>
+              <div className="audit-tab-bar" role="tablist" aria-label="Seções da auditoria">
+                <button type="button" role="tab" aria-selected={auditTab === "activity"} className={auditTab === "activity" ? "active" : ""} onClick={() => setAuditTab("activity")}>Atividades do sistema</button>
+                <button type="button" role="tab" aria-selected={auditTab === "fleet"} className={auditTab === "fleet" ? "active" : ""} onClick={() => setAuditTab("fleet")}>Frota, custos e combustível</button>
+              </div>
+              {auditTab === "activity" ? <>
                 <div className="record-tools audit-tools">
                   <label className="search-box"><span>⌕</span><input value={recordQueries.audit} onChange={(event) => setRecordQueries((previous) => ({ ...previous, audit: event.target.value }))} placeholder="Buscar atividade, usuário ou registro..." aria-label="Buscar auditoria" /></label>
                   <select className="audit-filter" aria-label="Filtrar por tipo de atividade" value={auditActionFilter} onChange={(event) => setAuditActionFilter(event.target.value)}><option value="all">Todas as atividades</option>{auditActionTypes.map((action) => <option key={action} value={action}>{auditActionLabel(action)}</option>)}</select>
                   <RecordViewToggle value={recordViews.audit} onChange={(view) => changeRecordView("audit", view)} label="auditoria" />
                 </div>
-              </div>
-              <div className="audit-summary-grid">
-                <article className="audit-summary-card"><span className="audit-summary-icon">◷</span><div><span>REGISTROS CARREGADOS</span><strong>{auditEntries.length}</strong><small>Atividades recentes da organização</small></div></article>
-                <article className="audit-summary-card"><span className="audit-summary-icon">♙</span><div><span>USUÁRIOS ENVOLVIDOS</span><strong>{auditActorCount}</strong><small>Responsáveis nas atividades recentes</small></div></article>
-                <article className="audit-summary-card"><span className="audit-summary-icon">◉</span><div><span>ATIVIDADES HOJE</span><strong>{auditTodayCount}</strong><small>Registradas desde meia-noite</small></div></article>
-                <article className="audit-summary-card"><span className="audit-summary-icon">⌕</span><div><span>RESULTADOS NA BUSCA</span><strong>{filteredAuditEntries.length}</strong><small>Correspondências dos filtros atuais</small></div></article>
-              </div>
-              {filteredAuditEntries.length ? recordViews.audit === "list" ? <div className="table-scroll audit-table-scroll">
-                <table className="audit-table"><thead><tr><th>DATA E HORA</th><th>RESPONSÁVEL</th><th>ATIVIDADE</th><th>REGISTRO AFETADO</th><th>DETALHES</th></tr></thead>
-                  <tbody>{filteredAuditEntries.map((entry) => (
-                    <tr key={entry.id}>
-                      <td><time>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.created_at))}</time></td>
-                      <td><div className="audit-actor"><span className="avatar small">{(entry.actorName || entry.actorEmail || "S").slice(0, 1).toUpperCase()}</span><span><strong>{entry.actorName || "Sistema"}</strong><small>{entry.actorEmail || "Ação automática"}</small></span></div></td>
-                      <td><span className="audit-action-label">{auditActionLabel(entry.action)}</span><small className="audit-technical-name">{entry.action}</small></td>
-                      <td><strong>{auditEntityLabel(entry.entity_type)}</strong><small className="audit-technical-name">{entry.entity_id}</small></td>
-                      <td className="audit-details-cell">{auditDetailsLabel(entry.details_json)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div> : <div className="audit-card-list">{filteredAuditEntries.map((entry) => <article className="audit-entry-card" key={entry.id}>
-                <div className="audit-entry-rail"><span aria-hidden="true">•</span></div>
-                <div className="audit-entry-content">
-                  <div className="audit-entry-topline"><span className="audit-entry-action">{auditActionLabel(entry.action)}</span><time>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.created_at))}</time></div>
-                  <p><strong>{entry.actorName || "Sistema"}</strong> {entry.actorEmail && <span>({entry.actorEmail})</span>} <span>· {auditEntityLabel(entry.entity_type)} · {entry.entity_id}</span></p>
-                  <small>{auditDetailsLabel(entry.details_json)}</small>
+                <div className="audit-summary-grid">
+                  <article className="audit-summary-card"><span className="audit-summary-icon">◷</span><div><span>REGISTROS CARREGADOS</span><strong>{auditEntries.length}</strong><small>Atividades recentes da organização</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">♙</span><div><span>USUÁRIOS ENVOLVIDOS</span><strong>{auditActorCount}</strong><small>Responsáveis nas atividades recentes</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">◉</span><div><span>ATIVIDADES HOJE</span><strong>{auditTodayCount}</strong><small>Registradas desde meia-noite</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">⌕</span><div><span>RESULTADOS NA BUSCA</span><strong>{filteredAuditEntries.length}</strong><small>Correspondências dos filtros atuais</small></div></article>
                 </div>
-              </article>)}</div> : <div className="audit-empty-state"><span>⌕</span><strong>{auditEntries.length ? "Nenhuma atividade encontrada" : "Ainda não há atividades registradas"}</strong><p>{auditEntries.length ? "Tente mudar os filtros ou usar outros termos na busca." : "As alterações de equipamentos, usuários, estoque e solicitações aparecerão aqui."}</p></div>}
-              <div className="audit-footer"><span>Exibindo até 500 atividades mais recentes da organização.</span><span>Os registros são gerados automaticamente pelo sistema.</span></div>
+                {filteredAuditEntries.length ? recordViews.audit === "list" ? <div className="table-scroll audit-table-scroll">
+                  <table className="audit-table"><thead><tr><th>DATA E HORA</th><th>RESPONSÁVEL</th><th>ATIVIDADE</th><th>REGISTRO AFETADO</th><th>DETALHES</th></tr></thead>
+                    <tbody>{filteredAuditEntries.map((entry) => (
+                      <tr key={entry.id}>
+                        <td><time>{formatDateTime(entry.created_at)}</time></td>
+                        <td><div className="audit-actor"><span className="avatar small">{(entry.actorName || entry.actorEmail || "S").slice(0, 1).toUpperCase()}</span><span><strong>{entry.actorName || "Sistema"}</strong><small>{entry.actorEmail || "Ação automática"}</small></span></div></td>
+                        <td><span className="audit-action-label">{auditActionLabel(entry.action)}</span><small className="audit-technical-name">{entry.action}</small></td>
+                        <td><strong>{auditEntityLabel(entry.entity_type)}</strong><small className="audit-technical-name">{entry.entity_id}</small></td>
+                        <td className="audit-details-cell">{auditDetailsLabel(entry.details_json)}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div> : <div className="audit-card-list">{filteredAuditEntries.map((entry) => <article className="audit-entry-card" key={entry.id}>
+                  <div className="audit-entry-rail"><span aria-hidden="true">•</span></div>
+                  <div className="audit-entry-content">
+                    <div className="audit-entry-topline"><span className="audit-entry-action">{auditActionLabel(entry.action)}</span><time>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.created_at))}</time></div>
+                    <p><strong>{entry.actorName || "Sistema"}</strong> {entry.actorEmail && <span>({entry.actorEmail})</span>} <span>· {auditEntityLabel(entry.entity_type)} · {entry.entity_id}</span></p>
+                    <small>{auditDetailsLabel(entry.details_json)}</small>
+                  </div>
+                </article>)}</div> : <div className="audit-empty-state"><span>⌕</span><strong>{auditEntries.length ? "Nenhuma atividade encontrada" : "Ainda não há atividades registradas"}</strong><p>{auditEntries.length ? "Tente mudar os filtros ou usar outros termos na busca." : "As alterações de equipamentos, usuários, estoque e solicitações aparecerão aqui."}</p></div>}
+                <div className="audit-footer"><span>Exibindo até 500 atividades mais recentes da organização.</span><span>Os registros são gerados automaticamente pelo sistema.</span></div>
+              </> : <div className="fleet-audit-content">
+                <div className="fleet-audit-intro"><div><strong>Visão gerencial da frota</strong><p>Filtre gastos por período, veículo, responsável e combustível. Responsáveis compartilhados também são considerados.</p></div><div className="fleet-export-actions">
+                  <button type="button" className="button button-secondary compact-button" onClick={() => exportCsv("gastos-combustivel.csv", ["Data", "Veículo", "Patrimônio", "Localização", "Responsável atual", "Registrado por", "Combustível", "Hodômetro (km)", "Distância desde abastecimento anterior (km)", "Valor pago (R$)"], filteredFleetFuelRecords.map((record) => [formatDateTime(record.createdAt), record.assetName, record.assetTag, record.location, record.ownerName, record.recordedByName, record.fuelType, record.odometerKm, record.distanceKm, record.amount]))}>Exportar abastecimentos</button>
+                  <button type="button" className="button button-secondary compact-button" onClick={() => exportCsv("ativos-e-responsaveis.csv", ["Ativo", "Categoria", "Patrimônio", "Localização", "Unidade", "Situação", "Responsável principal", "E-mail", "Compartilhado com", "Hodômetro (km)"], filteredFleetAuditAssets.map((asset) => [asset.name, asset.category, asset.tag, asset.location, asset.unitName, asset.status, asset.ownerName, asset.ownerEmail, asset.sharedWith.map((person) => person.name).filter(Boolean).join(", "), asset.vehicleKm]))}>Exportar ativos</button>
+                  <button type="button" className="button button-secondary compact-button" onClick={() => exportCsv("custos-manutencao.csv", ["Data de conclusão", "Ativo", "Localização", "Responsável", "Tipo", "Serviço", "Mão de obra (R$)", "Peças (R$)", "Total (R$)"], filteredFleetServiceOrders.map((order) => [formatDateTime(order.completedAt || order.createdAt), order.assetName, order.location, order.ownerName, order.kind, order.description, order.laborCost, order.partsCost, order.laborCost + order.partsCost]))}>Exportar manutenções</button>
+                </div></div>
+                <div className="fleet-audit-filters">
+                  <label>De<input type="date" value={fleetAuditFilters.startDate} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, startDate: event.target.value }))} /></label>
+                  <label>Até<input type="date" value={fleetAuditFilters.endDate} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, endDate: event.target.value }))} /></label>
+                  <label>Ativo<select value={fleetAuditFilters.assetId} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, assetId: event.target.value }))}><option value="all">Todos os ativos</option>{fleetAuditAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{asset.tag ? ` · ${asset.tag}` : ""}</option>)}</select></label>
+                  <label>Responsável<select value={fleetAuditFilters.ownerUid} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, ownerUid: event.target.value }))}><option value="all">Todos os responsáveis</option>{fleetAuditUsers.map((person) => <option key={person.uid} value={person.uid}>{person.name}</option>)}</select></label>
+                  <label>Combustível<select value={fleetAuditFilters.fuelType} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, fuelType: event.target.value }))}><option value="all">Todos os combustíveis</option>{[...new Set(fleetAuditFuelRecords.map((record) => record.fuelType))].sort().map((fuelType) => <option key={fuelType} value={fuelType}>{fuelType}</option>)}</select></label>
+                  <button type="button" className="button button-secondary compact-button" onClick={() => setFleetAuditFilters({ startDate: "", endDate: "", assetId: "all", ownerUid: "all", fuelType: "all" })}>Limpar filtros</button>
+                </div>
+                {fleetAuditFilters.startDate && fleetAuditFilters.endDate && fleetAuditFilters.startDate > fleetAuditFilters.endDate && <p className="notice error-notice">A data inicial não pode ser posterior à data final.</p>}
+                <div className="audit-summary-grid fleet-audit-summary">
+                  <article className="audit-summary-card"><span className="audit-summary-icon">R$</span><div><span>COMBUSTÍVEL NO PERÍODO</span><strong>{formatCurrency(fleetFuelTotal)}</strong><small>{filteredFleetFuelRecords.length} abastecimento(s) filtrado(s)</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">⚒</span><div><span>MANUTENÇÃO CONCLUÍDA</span><strong>{formatCurrency(fleetMaintenanceTotal)}</strong><small>{filteredFleetServiceOrders.length} ordem(ns) concluída(s)</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">◫</span><div><span>ATIVOS ATRIBUÍDOS</span><strong>{filteredFleetAuditAssets.length}</strong><small>Com responsável ou compartilhamento correspondente</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">♙</span><div><span>VEÍCULOS COM ABASTECIMENTO</span><strong>{fleetFuelByAsset.length}</strong><small>Veículos com registros nos filtros atuais</small></div></article>
+                </div>
+                <p className="fleet-audit-note">Os valores de combustível são os valores pagos informados no abastecimento. O sistema ainda não registra litros; por isso, não calcula preço por litro nem consumo médio. Os gastos de manutenção consideram apenas ordens concluídas.</p>
+                <div className="fleet-audit-breakdowns">
+                  <section className="fleet-audit-card"><div className="fleet-audit-card-heading"><div><span className="eyebrow">COMPOSIÇÃO DOS ABASTECIMENTOS</span><h3>Gastos por combustível</h3></div></div>
+                    {fleetFuelByType.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>COMBUSTÍVEL</th><th>ABASTECIMENTOS</th><th>TOTAL PAGO</th><th>PARTICIPAÇÃO</th></tr></thead><tbody>{fleetFuelByType.map((item) => <tr key={item.fuelType}><td>{item.fuelType}</td><td>{item.count}</td><td>{formatCurrency(item.amount)}</td><td><div className="fleet-spend-bar"><span style={{ width: `${fleetFuelTotal ? Math.max(2, item.amount / fleetFuelTotal * 100) : 0}%` }} /></div></td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há abastecimentos para os filtros selecionados.</p>}
+                  </section>
+                  <section className="fleet-audit-card"><div className="fleet-audit-card-heading"><div><span className="eyebrow">COMPARATIVO DA FROTA</span><h3>Gastos por veículo</h3></div></div>
+                    {fleetFuelByAsset.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>VEÍCULO</th><th>LOCALIZAÇÃO</th><th>RESPONSÁVEL</th><th>REGISTROS</th><th>TOTAL PAGO</th></tr></thead><tbody>{fleetFuelByAsset.map((item) => <tr key={item.assetId}><td><strong>{item.name}</strong>{item.tag && <small>{item.tag}</small>}</td><td>{item.location || "Não informada"}</td><td>{item.ownerName || "Sem responsável"}</td><td>{item.count}</td><td>{formatCurrency(item.amount)}</td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há abastecimentos para os filtros selecionados.</p>}
+                  </section>
+                </div>
+                <section className="fleet-audit-card fleet-audit-full-width"><div className="fleet-audit-card-heading"><div><span className="eyebrow">RESPONSABILIDADE E LOCALIZAÇÃO</span><h3>Onde estão os ativos e quem está com eles</h3></div><span>{filteredFleetAuditAssets.length} ativo(s)</span></div>
+                  {filteredFleetAuditAssets.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>ATIVO</th><th>LOCALIZAÇÃO</th><th>UNIDADE</th><th>SITUAÇÃO</th><th>RESPONSÁVEL PRINCIPAL</th><th>COMPARTILHADO COM</th><th>HODÔMETRO</th></tr></thead><tbody>{filteredFleetAuditAssets.map((asset) => <tr key={asset.id}><td><strong>{asset.name}</strong><small>{asset.category}{asset.tag ? ` · ${asset.tag}` : ""}</small></td><td>{asset.location || "Não informada"}</td><td>{asset.unitName || "—"}</td><td>{asset.status || "—"}</td><td>{asset.ownerName || "Sem responsável"}{asset.ownerEmail && <small>{asset.ownerEmail}</small>}</td><td>{asset.sharedWith.map((person) => person.name).filter(Boolean).join(", ") || "—"}</td><td>{asset.vehicleKm === null ? "—" : `${asset.vehicleKm.toLocaleString("pt-BR")} km`}</td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Nenhum ativo corresponde ao responsável selecionado.</p>}
+                </section>
+                <section className="fleet-audit-card fleet-audit-full-width"><div className="fleet-audit-card-heading"><div><span className="eyebrow">HISTÓRICO FINANCEIRO</span><h3>Abastecimentos detalhados</h3></div><span>{filteredFleetFuelRecords.length} registro(s)</span></div>
+                  {filteredFleetFuelRecords.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>DATA</th><th>VEÍCULO / LOCAL</th><th>RESPONSÁVEL</th><th>REGISTRADO POR</th><th>COMBUSTÍVEL</th><th>HODÔMETRO / DISTÂNCIA</th><th>VALOR PAGO</th></tr></thead><tbody>{filteredFleetFuelRecords.map((record) => <tr key={record.id}><td>{formatDateTime(record.createdAt)}</td><td><strong>{record.assetName}</strong><small>{record.location || "Localização não informada"}{record.assetTag ? ` · ${record.assetTag}` : ""}</small></td><td>{record.ownerName || "Sem responsável"}</td><td>{record.recordedByName || "Usuário indisponível"}</td><td>{record.fuelType}</td><td>{record.odometerKm.toLocaleString("pt-BR")} km<small>{record.distanceKm.toLocaleString("pt-BR")} km desde o anterior</small></td><td><strong>{formatCurrency(record.amount)}</strong></td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há abastecimentos para os filtros selecionados.</p>}
+                </section>
+                <section className="fleet-audit-card fleet-audit-full-width"><div className="fleet-audit-card-heading"><div><span className="eyebrow">CUSTOS DE OFICINA</span><h3>Ordens de serviço concluídas</h3></div><span>{filteredFleetServiceOrders.length} ordem(ns)</span></div>
+                  {filteredFleetServiceOrders.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>CONCLUSÃO</th><th>VEÍCULO / LOCAL</th><th>TIPO E SERVIÇO</th><th>RESPONSÁVEL</th><th>MÃO DE OBRA</th><th>PEÇAS</th><th>TOTAL</th></tr></thead><tbody>{filteredFleetServiceOrders.map((order) => <tr key={order.id}><td>{formatDateTime(order.completedAt || order.createdAt)}</td><td><strong>{order.assetName}</strong><small>{order.location || "Localização não informada"}</small></td><td>{order.kind}<small>{order.description}</small></td><td>{order.ownerName || "Sem responsável"}</td><td>{formatCurrency(order.laborCost)}</td><td>{formatCurrency(order.partsCost)}</td><td><strong>{formatCurrency(order.laborCost + order.partsCost)}</strong></td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há ordens concluídas para os filtros selecionados.</p>}
+                </section>
+                <div className="audit-footer"><span>Dados restritos aos ativos da organização.</span><span>O histórico completo de alterações permanece na aba Atividades do sistema.</span></div>
+              </div>}
             </section>
           )}
 

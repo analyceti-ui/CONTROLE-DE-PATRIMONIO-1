@@ -17,6 +17,12 @@ export async function GET(request: Request) {
       user.role === "admin" || asset.owner_uid === user.uid ||
       (Array.isArray(asset.shared_with_uids) && asset.shared_with_uids.includes(user.uid))
     );
+    if (new URL(request.url).searchParams.get("summary") === "1") {
+      return NextResponse.json({
+        count: visibleAssets.length,
+        inUse: visibleAssets.filter((asset) => asset.status === "Em uso").length,
+      });
+    }
     const ownerIds = [...new Set(visibleAssets.flatMap((asset) => [
       String(asset.owner_uid ?? ""),
       ...(Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : []),
@@ -33,8 +39,9 @@ export async function GET(request: Request) {
         const person = ownerMap.get(uid);
         return person ? String(person.display_name || person.email) : uid;
       });
-      const cover = photos.filter((photo) => photo.asset_id === asset.id)
-        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
+      const assetPhotos = photos.filter((photo) => photo.asset_id === asset.id)
+        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      const cover = assetPhotos.find((photo) => photo.id === asset.cover_photo_id) ?? assetPhotos[0];
       const visibleAsset = user.role === "admin" ? asset : {
         ...asset,
         purchase_date: "",

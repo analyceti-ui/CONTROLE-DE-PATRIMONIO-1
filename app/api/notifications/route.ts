@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ApiError, getFirestoreDb, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, readJson, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, readJson, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 const excludedStatuses = new Set(["Baixado", "Descartado", "Descartados"]);
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     }
     const [assets, preference] = await Promise.all([
       listRecords("assets", { organization_id: user.organizationId }),
-      getFirestoreDb().collection("notification_preferences").doc(user.uid).get(),
+      getDatabase().collection("notification_preferences").doc(user.uid).get(),
     ]);
     const visible = assets.filter((asset) => {
       const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
@@ -99,7 +99,7 @@ export async function PATCH(request: Request) {
     const body = await readJson(request);
     if (typeof body.inApp !== "boolean" || typeof body.emailEnabled !== "boolean") throw new ApiError(400, "Informe as preferências de aviso.");
     if (body.emailEnabled && !process.env.EMAIL_PROVIDER_API_KEY) throw new ApiError(400, "Avisos por e-mail ainda não têm um serviço configurado; use os avisos no painel.");
-    await getFirestoreDb().collection("notification_preferences").doc(user.uid).set({
+    await getDatabase().collection("notification_preferences").doc(user.uid).set({
       user_uid: user.uid, in_app: body.inApp, email_enabled: body.emailEnabled, updated_at: nowIso(),
     }, { merge: true });
     notificationCache.delete(user.uid);

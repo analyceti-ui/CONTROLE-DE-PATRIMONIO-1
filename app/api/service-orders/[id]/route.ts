@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ApiError, getFirestoreDb, getSessionUser, handleApiError, nowIso, readJson, requireOrganizationUser, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getSessionUser, handleApiError, nowIso, readJson, requireOrganizationUser, writeAssetHistory, writeAudit } from "@/lib/api";
 
 type RouteContext = { params: Promise<{ id: string }> };
 export const runtime = "nodejs";
@@ -10,9 +10,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     const user = await getSessionUser(request);
     const { id } = await context.params;
     const body = await readJson(request);
-    const db = getFirestoreDb();
+    const db = getDatabase();
     const orderRef = db.collection("service_orders").doc(id);
-    let order: FirebaseFirestore.DocumentData | undefined;
+    let order: Record<string, unknown> | undefined;
     let organizationId = "";
     let assetId = "";
     let resultingStatus = "";

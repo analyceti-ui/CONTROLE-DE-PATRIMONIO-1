@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ApiError, deleteRecord, deleteRecords, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, requireOrganizationUser, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { canAccessSection } from "@/lib/permissions";
 import { deleteImage } from "@/lib/cloudinary";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -27,6 +28,10 @@ export async function GET(request: Request, context: RouteContext) {
       listRecords("asset_photos", { asset_id: id }),
       listRecords("asset_transfers", { asset_id: id }),
     ]);
+    const showInspections = canAccessSection(user.permissions, "inspections", "view");
+    const showOrders = canAccessSection(user.permissions, "orders", "view");
+    const showMaintenance = canAccessSection(user.permissions, "maintenance", "view");
+    const showFuel = canAccessSection(user.permissions, "fuel", "view");
     const transferPhotos = await listRecordsMatchingAny(
       "asset_transfer_photos",
       "transfer_id",
@@ -62,16 +67,23 @@ export async function GET(request: Request, context: RouteContext) {
     };
     return NextResponse.json({
       asset: { ...visibleAsset, ownerEmail: owner?.email ?? "", ownerName: owner?.display_name ?? "" },
-      history: sortRecent(histories).map((entry) => ({
+      history: sortRecent(histories).filter((entry) => {
+        const eventType = String(entry.event_type);
+        if (eventType.startsWith("inspection.")) return showInspections;
+        if (eventType.startsWith("service_order.")) return showOrders;
+        if (eventType.startsWith("maintenance_plan.")) return showMaintenance;
+        if (eventType.startsWith("vehicle.")) return showFuel;
+        return true;
+      }).map((entry) => ({
         id: entry.id, eventType: entry.event_type, description: entry.description,
         metadataJson: entry.metadata_json ?? "{}", createdAt: entry.created_at,
         actorName: people.get(String(entry.actor_uid))?.display_name ?? null,
       })),
-      inspections: sortRecent(inspections).map((item) => ({
+      inspections: (showInspections ? sortRecent(inspections) : []).map((item) => ({
         id: item.id, result: item.result, notes: item.notes, checklistJson: item.checklist_json,
         photoType: item.photo_type, createdAt: item.created_at,
       })),
-      serviceOrders: sortRecent(serviceOrders).map((item) => ({
+      serviceOrders: (showOrders ? sortRecent(serviceOrders) : []).map((item) => ({
         id: item.id, kind: item.kind, description: item.description, priority: item.priority, status: item.status,
         dueDate: item.due_date, laborCost: item.labor_cost, partsCost: item.parts_cost,
         completedAt: item.completed_at, createdAt: item.created_at,
