@@ -44,8 +44,16 @@ export async function POST(request: Request) {
     const kind = typeof body.kind === "string" ? body.kind : "Corretiva";
     const priority = typeof body.priority === "string" ? body.priority : "Normal";
     const dueDate = typeof body.dueDate === "string" ? body.dueDate : "";
+    const laborCost = body.laborCost === undefined || body.laborCost === "" ? 0 : Number(body.laborCost);
+    const partsCost = body.partsCost === undefined || body.partsCost === "" ? 0 : Number(body.partsCost);
+    if (body.invoiceNumber !== undefined && typeof body.invoiceNumber !== "string") {
+      throw new ApiError(400, "Informe um número de nota fiscal válido.");
+    }
+    const invoiceNumber = typeof body.invoiceNumber === "string" ? body.invoiceNumber.trim() : "";
     if (!description || description.length > 2000) throw new ApiError(400, "Descreva o serviço (até 2.000 caracteres).");
     if (!kinds.has(kind) || !priorities.has(priority)) throw new ApiError(400, "Tipo ou prioridade inválida.");
+    if ([laborCost, partsCost].some((value) => !Number.isFinite(value) || value < 0)) throw new ApiError(400, "Informe custos válidos.");
+    if (invoiceNumber.length > 100) throw new ApiError(400, "O número da nota fiscal deve ter até 100 caracteres.");
     if (dueDate && (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || Number.isNaN(Date.parse(`${dueDate}T00:00:00Z`)))) throw new ApiError(400, "Prazo inválido.");
     await organizationScopedAsset(user, assetId);
     let assignedTo: string | null = null;
@@ -59,7 +67,8 @@ export async function POST(request: Request) {
     await setRecord("service_orders", id, {
       asset_id: assetId, opened_by: user.uid, assigned_to: assignedTo,
       kind, description, priority, status: "Aberta", due_date: dueDate, odometer_km: null,
-      hours_used: null, labor_cost: 0, parts_cost: 0, invoice_number: null, completed_at: null,
+      hours_used: null, labor_cost: laborCost, parts_cost: partsCost,
+      invoice_number: invoiceNumber || null, completed_at: null,
       maintenance_distance_km: null, created_at: timestamp, updated_at: timestamp,
     });
     await writeAssetHistory(assetId, user.uid, "service_order.created", `Ordem de serviço aberta: ${description}`, { id, kind, priority });

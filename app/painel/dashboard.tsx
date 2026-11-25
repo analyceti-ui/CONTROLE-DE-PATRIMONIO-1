@@ -322,7 +322,7 @@ export default function DashboardPage({ section }: { section: string }) {
   const [scanning, setScanning] = useState(false);
   const [scannerError, setScannerError] = useState("");
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
-  const [orderForm, setOrderForm] = useState({ assetId: "", kind: "Corretiva", priority: "Normal", description: "", dueDate: "" });
+  const [orderForm, setOrderForm] = useState({ assetId: "", kind: "Corretiva", priority: "Normal", description: "", dueDate: "", laborCost: "", partsCost: "", invoiceNumber: "" });
   const [planForm, setPlanForm] = useState({ assetId: "", intervalDays: "", intervalKm: "", intervalHours: "", advanceDays: "7", nextDueKm: "", nextDueHours: "", nextMaintenance: "" });
   const [inspectionForm, setInspectionForm] = useState({ assetId: "", result: "Aprovada", notes: "", photo: null as File | null, checklist: { pneus: true, freios: true, limpeza: true, seguranca: true } });
   const [inventoryForm, setInventoryForm] = useState({ name: "", sku: "", unit: "un", quantity: "0", minimumQuantity: "0", unitCost: "0" });
@@ -1193,9 +1193,14 @@ export default function DashboardPage({ section }: { section: string }) {
     try {
       await responseData(await api("/api/service-orders", {
         method: "POST",
-        body: JSON.stringify(orderForm),
+        body: JSON.stringify({
+          ...orderForm,
+          laborCost: Number(orderForm.laborCost || 0),
+          partsCost: Number(orderForm.partsCost || 0),
+          invoiceNumber: orderForm.invoiceNumber.trim(),
+        }),
       }));
-      setOrderForm({ assetId: "", kind: "Corretiva", priority: "Normal", description: "", dueDate: "" });
+      setOrderForm({ assetId: "", kind: "Corretiva", priority: "Normal", description: "", dueDate: "", laborCost: "", partsCost: "", invoiceNumber: "" });
       setRecordFormOpen((previous) => ({ ...previous, orders: false }));
       setNotice("Ordem de serviço aberta.");
       await loadData();
@@ -1777,7 +1782,7 @@ export default function DashboardPage({ section }: { section: string }) {
             </div>
             {profile?.role === "admin" && <div className="preventive-alerts">
               <div className="preventive-alerts-heading">
-                <div><h3>Preventiva executada? Registre os custos e a nota fiscal</h3><p>O plano desta tela agenda a próxima manutenção. Para registrar o serviço realizado, informe valor e NF na ordem de serviço.</p></div>
+                <div><h3>Preventiva executada? Registre os custos e a nota fiscal</h3><p>O plano desta tela agenda a próxima manutenção. Use o botão abaixo para abrir uma ordem preventiva e informar o valor e o número da NF.</p></div>
                 <Link className="button button-primary compact-button" href="/painel/orders?kind=Preventiva">Registrar manutenção</Link>
               </div>
             </div>}
@@ -1841,12 +1846,16 @@ export default function DashboardPage({ section }: { section: string }) {
               </div>
             </div>
             {recordFormOpen.orders && <form id="orders-create-form" className="asset-form entry-form" onSubmit={addServiceOrder}>
-              <div className="form-group-heading"><strong>Dados da ordem</strong><span>Informe o ativo, a prioridade e o serviço que precisa ser realizado.</span></div>
+              <div className="form-group-heading"><strong>Dados da ordem</strong><span>Informe o ativo e o serviço. Se já tiver os dados, registre também os custos e o número da nota fiscal.</span></div>
               <label>Ativo<select required value={orderForm.assetId} onChange={(event) => setOrderForm({ ...orderForm, assetId: event.target.value })}><option value="">Selecione</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
               <label>Tipo<select value={orderForm.kind} onChange={(event) => setOrderForm({ ...orderForm, kind: event.target.value })}><option>Corretiva</option><option>Preventiva</option><option>Inspeção</option></select></label>
               <label>Prioridade<select value={orderForm.priority} onChange={(event) => setOrderForm({ ...orderForm, priority: event.target.value })}><option>Baixa</option><option>Normal</option><option>Alta</option><option>Urgente</option></select></label>
               <label>Prazo<input type="date" value={orderForm.dueDate} onChange={(event) => setOrderForm({ ...orderForm, dueDate: event.target.value })} /></label>
               <label className="wide-field">Descrição<input required maxLength={2000} value={orderForm.description} onChange={(event) => setOrderForm({ ...orderForm, description: event.target.value })} placeholder="Descreva o serviço necessário" /></label>
+              <label>Mão de obra (R$)<input type="number" min="0" step="0.01" value={orderForm.laborCost} onChange={(event) => setOrderForm({ ...orderForm, laborCost: event.target.value })} placeholder="0,00" /></label>
+              <label>Peças e materiais (R$)<input type="number" min="0" step="0.01" value={orderForm.partsCost} onChange={(event) => setOrderForm({ ...orderForm, partsCost: event.target.value })} placeholder="0,00" /></label>
+              <label>Nº da nota fiscal<input maxLength={100} value={orderForm.invoiceNumber} onChange={(event) => setOrderForm({ ...orderForm, invoiceNumber: event.target.value })} placeholder="Ex.: 12345" /></label>
+              <p className="table-subtext wide-field">Valor total: {(Number(orderForm.laborCost || 0) + Number(orderForm.partsCost || 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}. Você pode preencher ou atualizar esses dados depois.</p>
               <button className="button button-primary add-button" type="submit">Abrir ordem</button>
             </form>}
             {orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date, order.invoice_number].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).length ? recordViews.orders === "list" ? <div className="table-scroll">
