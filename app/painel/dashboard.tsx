@@ -63,10 +63,11 @@ type ServiceOrder = {
   due_date: string;
   labor_cost: number;
   parts_cost: number;
+  invoice_number: string | null;
   odometer_km: number | null;
   hours_used: number | null;
 };
-type OrderFields = { laborCost: string; partsCost: string; odometerKm: string; hoursUsed: string };
+type OrderFields = { laborCost: string; partsCost: string; invoiceNumber: string; odometerKm: string; hoursUsed: string };
 type InventoryItem = { id: string; name: string; sku: string; unit: string; quantity: number; minimum_quantity: number; unit_cost: number };
 type PurchaseRequest = { id: string; description: string; quantity: number; estimated_cost: number; status: string; requesterName: string };
 type Inspection = { id: string; assetId: string; assetName: string; result: string; notes: string; photoType: string | null; createdAt: string };
@@ -660,6 +661,12 @@ export default function DashboardPage({ section }: { section: string }) {
     }
   }, [profile, section]);
 
+  useEffect(() => {
+    if (section !== "orders" || searchParams.get("kind") !== "Preventiva" || profile?.role !== "admin") return;
+    setOrderForm((current) => ({ ...current, kind: "Preventiva" }));
+    setRecordFormOpen((current) => ({ ...current, orders: true }));
+  }, [profile?.role, searchParams, section]);
+
   async function submitFuelRecord(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedQrAsset || !fuelForm.odometerPhoto || !fuelForm.receiptPhoto) return;
@@ -1205,6 +1212,7 @@ export default function DashboardPage({ section }: { section: string }) {
           status,
           laborCost: Number(fields.laborCost || 0),
           partsCost: Number(fields.partsCost || 0),
+          invoiceNumber: fields.invoiceNumber.trim(),
           ...(fields.odometerKm === "" ? {} : { odometerKm: Number(fields.odometerKm) }),
           ...(fields.hoursUsed === "" ? {} : { hoursUsed: Number(fields.hoursUsed) }),
         }),
@@ -1767,6 +1775,12 @@ export default function DashboardPage({ section }: { section: string }) {
                 {profile?.role === "admin" && <button className="button button-primary compact-button" type="button" aria-expanded={recordFormOpen.maintenance} aria-controls="maintenance-create-form" onClick={() => { setError(""); setRecordFormOpen((previous) => ({ ...previous, maintenance: !previous.maintenance })); }}>{recordFormOpen.maintenance ? "Fechar formulário" : "+ Nova preventiva"}</button>}
               </div>
             </div>
+            {profile?.role === "admin" && <div className="preventive-alerts">
+              <div className="preventive-alerts-heading">
+                <div><h3>Preventiva executada? Registre os custos e a nota fiscal</h3><p>O plano desta tela agenda a próxima manutenção. Para registrar o serviço realizado, informe valor e NF na ordem de serviço.</p></div>
+                <Link className="button button-primary compact-button" href="/painel/orders?kind=Preventiva">Registrar manutenção</Link>
+              </div>
+            </div>}
             <section className="preventive-alerts" aria-labelledby="preventive-alerts-title">
               <div className="preventive-alerts-heading">
                 <div><h3 id="preventive-alerts-title">Preventivas que precisam de atenção</h3><p>Os avisos abaixo são os mesmos exibidos no sino e levam ao equipamento relacionado.</p></div>
@@ -1835,12 +1849,13 @@ export default function DashboardPage({ section }: { section: string }) {
               <label className="wide-field">Descrição<input required maxLength={2000} value={orderForm.description} onChange={(event) => setOrderForm({ ...orderForm, description: event.target.value })} placeholder="Descreva o serviço necessário" /></label>
               <button className="button button-primary add-button" type="submit">Abrir ordem</button>
             </form>}
-            {orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).length ? recordViews.orders === "list" ? <div className="table-scroll">
+            {orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date, order.invoice_number].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).length ? recordViews.orders === "list" ? <div className="table-scroll">
               <table><thead><tr><th>ATIVO</th><th>TIPO / DESCRIÇÃO</th><th>PRIORIDADE</th><th>PRAZO</th><th>SITUAÇÃO</th><th>CUSTOS E MEDIÇÕES</th></tr></thead>
-                <tbody>{orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).map((order) => {
+                <tbody>{orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date, order.invoice_number].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).map((order) => {
                   const fields = orderFields[order.id] ?? {
                     laborCost: String(order.labor_cost ?? 0),
                     partsCost: String(order.parts_cost ?? 0),
+                    invoiceNumber: order.invoice_number ?? "",
                     odometerKm: order.odometer_km === null ? "" : String(order.odometer_km),
                     hoursUsed: order.hours_used === null ? "" : String(order.hours_used),
                   };
@@ -1857,19 +1872,22 @@ export default function DashboardPage({ section }: { section: string }) {
                     <td>{order.priority}</td><td>{order.due_date || "—"}</td>
                     <td><select className="status-select" aria-label={`Situação da ordem de ${order.assetName}`} value={order.status} onChange={(event) => void updateServiceOrder(order, event.target.value, fields)}><option>Aberta</option><option>Em andamento</option><option>Aguardando peça</option><option>Concluída</option><option>Cancelada</option></select></td>
                     <td><div className="order-fields">
-                      <label>Mão de obra<input type="number" min="0" step="0.01" value={fields.laborCost} onChange={(event) => setField("laborCost", event.target.value)} /></label>
-                      <label>Peças<input type="number" min="0" step="0.01" value={fields.partsCost} onChange={(event) => setField("partsCost", event.target.value)} /></label>
+                      <label>Mão de obra (R$)<input type="number" min="0" step="0.01" value={fields.laborCost} onChange={(event) => setField("laborCost", event.target.value)} /></label>
+                      <label>Peças e materiais (R$)<input type="number" min="0" step="0.01" value={fields.partsCost} onChange={(event) => setField("partsCost", event.target.value)} /></label>
+                      <label>Nº da nota fiscal<input maxLength={100} value={fields.invoiceNumber} onChange={(event) => setField("invoiceNumber", event.target.value)} placeholder="Ex.: 12345" /></label>
                       <label>Km<input type="number" min="0" step="1" value={fields.odometerKm} onChange={(event) => setField("odometerKm", event.target.value)} /></label>
                       <label>Horas<input type="number" min="0" step="1" value={fields.hoursUsed} onChange={(event) => setField("hoursUsed", event.target.value)} /></label>
+                      <small className="table-subtext">Total: {(Number(fields.laborCost || 0) + Number(fields.partsCost || 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</small>
                       <button className="button button-secondary compact-button" type="button" onClick={() => void updateServiceOrder(order, order.status, fields)}>Salvar</button>
                     </div></td>
                   </tr>
                 );})}</tbody>
               </table>
-            </div> : <div className="record-card-grid">{orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).map((order) => {
+            </div> : <div className="record-card-grid">{orders.filter((order) => [order.assetName, order.kind, order.description, order.priority, order.status, order.due_date, order.invoice_number].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.orders.trim().toLocaleLowerCase("pt-BR"))).map((order) => {
               const fields = orderFields[order.id] ?? {
                 laborCost: String(order.labor_cost ?? 0),
                 partsCost: String(order.parts_cost ?? 0),
+                invoiceNumber: order.invoice_number ?? "",
                 odometerKm: order.odometer_km === null ? "" : String(order.odometer_km),
                 hoursUsed: order.hours_used === null ? "" : String(order.hours_used),
               };
@@ -1879,8 +1897,10 @@ export default function DashboardPage({ section }: { section: string }) {
                 <dl className="record-card-details"><div><dt>Prazo</dt><dd>{order.due_date || "—"}</dd></div></dl>
                 <div className="record-card-edit-grid">
                   <label>Situação<select className="status-select" value={order.status} onChange={(event) => void updateServiceOrder(order, event.target.value, fields)}><option>Aberta</option><option>Em andamento</option><option>Aguardando peça</option><option>Concluída</option><option>Cancelada</option></select></label>
-                  {(["laborCost", "partsCost", "odometerKm", "hoursUsed"] as const).map((field) => <label key={field}>{field === "laborCost" ? "Mão de obra" : field === "partsCost" ? "Peças" : field === "odometerKm" ? "Km" : "Horas"}<input type="number" min="0" step={field === "laborCost" || field === "partsCost" ? "0.01" : "1"} value={fields[field]} onChange={(event) => setOrderFields((previous) => ({ ...previous, [order.id]: { ...fields, [field]: event.target.value } }))} /></label>)}
+                  {(["laborCost", "partsCost", "odometerKm", "hoursUsed"] as const).map((field) => <label key={field}>{field === "laborCost" ? "Mão de obra (R$)" : field === "partsCost" ? "Peças e materiais (R$)" : field === "odometerKm" ? "Km" : "Horas"}<input type="number" min="0" step={field === "laborCost" || field === "partsCost" ? "0.01" : "1"} value={fields[field]} onChange={(event) => setOrderFields((previous) => ({ ...previous, [order.id]: { ...fields, [field]: event.target.value } }))} /></label>)}
+                  <label>Nº da nota fiscal<input maxLength={100} value={fields.invoiceNumber} onChange={(event) => setOrderFields((previous) => ({ ...previous, [order.id]: { ...fields, invoiceNumber: event.target.value } }))} placeholder="Ex.: 12345" /></label>
                 </div>
+                <p className="record-card-description">Valor total: {(Number(fields.laborCost || 0) + Number(fields.partsCost || 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
                 <button className="button button-secondary compact-button record-card-save" type="button" onClick={() => void updateServiceOrder(order, order.status, fields)}>Salvar alterações</button>
               </article>;
             })}</div> : <p className="empty-panel">{orders.length && recordQueries.orders.trim() ? "Nenhuma ordem corresponde à busca." : "Nenhuma ordem de serviço cadastrada."}</p>}

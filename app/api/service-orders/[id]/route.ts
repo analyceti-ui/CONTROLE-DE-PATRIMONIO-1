@@ -35,11 +35,18 @@ export async function PATCH(request: Request, context: RouteContext) {
       if (!statuses.has(resultingStatus)) throw new ApiError(400, "Situação da ordem inválida.");
       const laborCost = body.laborCost === undefined ? Number(current.labor_cost ?? 0) : Number(body.laborCost);
       const partsCost = body.partsCost === undefined ? Number(current.parts_cost ?? 0) : Number(body.partsCost);
+      if (body.invoiceNumber !== undefined && typeof body.invoiceNumber !== "string") {
+        throw new ApiError(400, "Informe um número de nota fiscal válido.");
+      }
+      const invoiceNumber = body.invoiceNumber === undefined
+        ? String(current.invoice_number ?? "")
+        : body.invoiceNumber.trim();
       const odometerKm = body.odometerKm === undefined ? (current.odometer_km == null ? null : Number(current.odometer_km))
         : body.odometerKm === null ? null : Number(body.odometerKm);
       const hoursUsed = body.hoursUsed === undefined ? (current.hours_used == null ? null : Number(current.hours_used))
         : body.hoursUsed === null ? null : Number(body.hoursUsed);
       if ([laborCost, partsCost].some((value) => !Number.isFinite(value) || value < 0)) throw new ApiError(400, "Informe custos válidos.");
+      if (invoiceNumber.length > 100) throw new ApiError(400, "O número da nota fiscal deve ter até 100 caracteres.");
       if (odometerKm !== null && (!Number.isInteger(odometerKm) || odometerKm < 0)) throw new ApiError(400, "Quilometragem inválida.");
       if (hoursUsed !== null && (!Number.isInteger(hoursUsed) || hoursUsed < 0)) throw new ApiError(400, "Horas de uso inválidas.");
       const completing = resultingStatus === "Concluída" && current.status !== "Concluída" && current.kind !== "Inspeção";
@@ -74,6 +81,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       }
       const updates = {
         status: resultingStatus, labor_cost: laborCost, parts_cost: partsCost,
+        invoice_number: invoiceNumber || null,
         odometer_km: odometerKm, hours_used: hoursUsed,
         maintenance_distance_km: maintenanceDistanceKm,
         completed_at: resultingStatus === "Concluída" ? (current.completed_at ?? nowIso()) : current.completed_at ?? null,
@@ -86,7 +94,8 @@ export async function PATCH(request: Request, context: RouteContext) {
     });
     await writeAssetHistory(assetId, user.uid, "service_order.updated", `Ordem de serviço ${resultingStatus.toLowerCase()}.`, {
       id, status: resultingStatus, laborCost: order?.labor_cost, partsCost: order?.parts_cost,
-      odometerKm: order?.odometer_km, maintenanceDistanceKm: order?.maintenance_distance_km,
+      invoiceNumber: order?.invoice_number, odometerKm: order?.odometer_km,
+      maintenanceDistanceKm: order?.maintenance_distance_km,
     });
     await writeAudit(user.organizationId, user.uid, "service_order.updated", "service_order", id, { status: resultingStatus });
     return NextResponse.json({ ok: true });

@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     await setRecord("service_orders", id, {
       asset_id: assetId, opened_by: user.uid, assigned_to: assignedTo,
       kind, description, priority, status: "Aberta", due_date: dueDate, odometer_km: null,
-      hours_used: null, labor_cost: 0, parts_cost: 0, completed_at: null,
+      hours_used: null, labor_cost: 0, parts_cost: 0, invoice_number: null, completed_at: null,
       maintenance_distance_km: null, created_at: timestamp, updated_at: timestamp,
     });
     await writeAssetHistory(assetId, user.uid, "service_order.created", `Ordem de serviço aberta: ${description}`, { id, kind, priority });
