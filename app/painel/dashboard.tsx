@@ -2150,10 +2150,10 @@ export default function DashboardPage({ section }: { section: string }) {
           </section>}
 
           {profile?.role === "admin" && section === "settings-backup" && <section className="panel settings-topic-page">
-            <div className="panel-heading"><div><span className="eyebrow">CONFIGURAÇÕES / DADOS</span><h2>Dados na nuvem</h2><p>Os dados do sistema são armazenados no Firebase Cloud Firestore e as imagens no Cloudinary.</p></div></div>
+            <div className="panel-heading"><div><span className="eyebrow">CONFIGURAÇÕES / DADOS</span><h2>Dados na nuvem</h2><p>Os dados do sistema são armazenados no PostgreSQL do Supabase e as imagens no Cloudinary.</p></div></div>
             <div className="settings-form backup-card settings-single-form">
               <strong className="form-section-title">Backups e restauração</strong>
-              <p>Backups SQLite locais foram desativados para evitar que os dados da Vercel sejam gravados no disco temporário. Para exportar ou restaurar dados, use as ferramentas de exportação/importação do Firebase Cloud Firestore. As imagens ficam gerenciadas na sua conta Cloudinary.</p>
+              <p>Backups SQLite locais foram desativados para evitar que os dados da Vercel sejam gravados no disco temporário. Para exportar ou restaurar dados, use as ferramentas de backup do Supabase. As imagens ficam gerenciadas na sua conta Cloudinary.</p>
               <p className="form-help">A restauração por arquivo SQLite não é compatível com o armazenamento em nuvem.</p>
             </div>
           </section>}

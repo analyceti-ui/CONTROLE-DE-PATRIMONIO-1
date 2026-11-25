@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { readImageUploads } from "@/lib/asset-photos";
-import { ApiError, getFirestoreDb, getSessionUser, handleApiError, listRecords, nowIso, organizationScopedAsset, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getSessionUser, handleApiError, listRecords, nowIso, organizationScopedAsset, writeAssetHistory, writeAudit } from "@/lib/api";
 import { deleteImage, uploadImage } from "@/lib/cloudinary";
 
 export const runtime = "nodejs";
@@ -65,7 +65,7 @@ export async function POST(request: Request, context: RouteContext) {
     const receipt = await uploadImage(receiptPhotos[0].blob, receiptPhotos[0].type, `${user.organizationId}/assets/${id}/fuel`);
     uploaded.push(receipt);
 
-    const db = getFirestoreDb();
+    const db = getDatabase();
     const recordId = randomUUID();
     const timestamp = nowIso();
     let previousOdometerKm = 0;

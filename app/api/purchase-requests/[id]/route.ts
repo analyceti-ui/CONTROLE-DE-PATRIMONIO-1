@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ApiError, getFirestoreDb, getRecord, getSessionUser, handleApiError, nowIso, readJson, requireAdmin, requireOrganizationUser, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getRecord, getSessionUser, handleApiError, nowIso, readJson, requireAdmin, requireOrganizationUser, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id: string }> };
@@ -15,7 +15,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const item = await getRecord("purchase_requests", id);
     if (!item) throw new ApiError(404, "Solicitação não encontrada.");
     requireOrganizationUser(user, String(item.organization_id));
-    await getFirestoreDb().collection("purchase_requests").doc(id).update({ status, updated_at: nowIso() });
+    await getDatabase().collection("purchase_requests").doc(id).update({ status, updated_at: nowIso() });
     await writeAudit(user.organizationId, user.uid, "purchase_request.updated", "purchase_request", id, { status });
     return NextResponse.json({ ok: true });
   } catch (error) {

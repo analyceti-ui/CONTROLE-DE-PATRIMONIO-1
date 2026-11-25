@@ -1,18 +1,16 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual, randomUUID } from "node:crypto";
-import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
 import { NextResponse } from "next/server";
 import {
   deleteRecord,
   deleteRecords,
   getRecord,
-  getFirestoreDb,
+  getDatabase,
   listRecords,
   listRecordsMatchingAny,
   nowIso,
   setRecord,
   type RecordData,
-} from "@/lib/firestore";
+} from "@/lib/database";
 import { ApiError } from "@/lib/errors";
 
 export { ApiError } from "@/lib/errors";
@@ -27,29 +25,6 @@ export type SessionUser = {
   mustChangePassword: boolean;
 };
 export type User = SessionUser & { createdAt: string };
-
-export async function getFirebaseAuth() {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
-  if (privateKey?.startsWith('"') && privateKey.endsWith('"')) {
-    try {
-      const parsed = JSON.parse(privateKey);
-      if (typeof parsed === "string") privateKey = parsed;
-    } catch {
-      privateKey = privateKey.slice(1, -1);
-    }
-  }
-  privateKey = privateKey?.replace(/\\n/g, "\n");
-  if (!projectId || !clientEmail || !privateKey) {
-    throw new ApiError(503, "Firebase não está configurado nas variáveis de ambiente.");
-  }
-  const app = getApps()[0] ?? initializeApp({
-    credential: cert({ projectId, clientEmail, privateKey }),
-    projectId,
-  });
-  return getAuth(app);
-}
 
 export function hashPassword(password: string) {
   const salt = randomBytes(16);
@@ -70,7 +45,7 @@ export function createId() {
 }
 
 export async function createUserRecord(uid: string, email: string, data: Record<string, unknown>) {
-  const db = getFirestoreDb();
+  const db = getDatabase();
   const normalizedEmail = email.trim().toLowerCase();
   const emailId = createHash("sha256").update(normalizedEmail).digest("hex");
   await db.runTransaction(async (transaction) => {
@@ -187,7 +162,7 @@ export function requireOrganizationUser(user: SessionUser, organizationId: strin
 }
 
 export async function recordFailedLogin(email: string, ipAddress: string) {
-  const db = getFirestoreDb();
+  const db = getDatabase();
   const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const [emailAttempts, ipAttempts] = await Promise.all([
     db.collection("login_attempts").where("email", "==", email).get(),
@@ -225,18 +200,6 @@ export function handleApiError(error: unknown) {
   if (error instanceof ApiError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
-  if (error && typeof error === "object") {
-    const firebaseError = error as { code?: unknown; message?: unknown };
-    const code = String(firebaseError.code ?? "").toUpperCase();
-    const message = typeof firebaseError.message === "string" ? firebaseError.message : "";
-    if (code === "8" || code === "RESOURCE_EXHAUSTED" || /RESOURCE_EXHAUSTED|QUOTA EXCEEDED/i.test(message)) {
-      console.error("Cota do Firebase/Firestore excedida:", error);
-      return NextResponse.json(
-        { error: "A cota do Firebase/Firestore foi atingida. Os dados não puderam ser atualizados. Aguarde a renovação da cota ou verifique o uso e o plano do projeto Firebase." },
-        { status: 503 },
-      );
-    }
-  }
   console.error("Erro inesperado na API:", error);
   return NextResponse.json({ error: "Não foi possível concluir a operação." }, { status: 500 });
 }
@@ -252,4 +215,4 @@ export async function getOrganizationRecords<T extends RecordData = RecordData>(
   return listRecords<T>(collection, { organization_id: organizationId });
 }
 
-export { deleteRecord, deleteRecords, getRecord, getFirestoreDb, listRecords, listRecordsMatchingAny, nowIso, setRecord };
+export { deleteRecord, deleteRecords, getRecord, getDatabase, listRecords, listRecordsMatchingAny, nowIso, setRecord };

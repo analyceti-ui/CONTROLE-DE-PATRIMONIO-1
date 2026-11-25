@@ -9,22 +9,22 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint app lib scripts/migrate-sqlite-to-cloud.mjs",
+    "lint": "eslint app lib scripts/migrate-sqlite-to-supabase.mjs",
     "typecheck": "tsc --noEmit",
-    "migrate:cloud": "node --env-file=.env.local scripts/migrate-sqlite-to-cloud.mjs"
+    "migrate:supabase": "node --env-file=.env.local scripts/migrate-sqlite-to-supabase.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.10.0",
     "cloudinary": "^2.11.0",
-    "firebase": "^13.4.0",
-    "firebase-admin": "^13.10.0",
     "next": "^15.5.0",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getFirestoreDb, getRecord, getSessionUser, handleApiError, readJson, requireAdmin, requireOrganizationUser, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getRecord, getSessionUser, handleApiError, readJson, requireAdmin, requireOrganizationUser, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id: string }> };
@@ -17,7 +17,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const delta = Number(body.quantityDelta);
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     if (!Number.isFinite(delta) || delta === 0 || !reason || reason.length > 160) throw new ApiError(400, "Informe uma alteração de quantidade e o motivo.");
-    const db = getFirestoreDb();
+    const db = getDatabase();
     let updatedQuantity = 0;
     await db.runTransaction(async (transaction) => {
       const ref = db.collection("inventory_items").doc(id);
