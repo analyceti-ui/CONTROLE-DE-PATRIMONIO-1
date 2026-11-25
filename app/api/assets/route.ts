@@ -17,6 +17,12 @@ export async function GET(request: Request) {
       user.role === "admin" || asset.owner_uid === user.uid ||
       (Array.isArray(asset.shared_with_uids) && asset.shared_with_uids.includes(user.uid))
     );
+    if (new URL(request.url).searchParams.get("summary") === "1") {
+      return NextResponse.json({
+        count: visibleAssets.length,
+        inUse: visibleAssets.filter((asset) => asset.status === "Em uso").length,
+      });
+    }
     const ownerIds = [...new Set(visibleAssets.flatMap((asset) => [
       String(asset.owner_uid ?? ""),
       ...(Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : []),

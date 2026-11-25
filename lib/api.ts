@@ -12,6 +12,12 @@ import {
   type RecordData,
 } from "@/lib/database";
 import { ApiError } from "@/lib/errors";
+import {
+  canAccessSection,
+  isUserPermissions,
+  type PermissionSection,
+  type UserPermissions,
+} from "@/lib/permissions";
 
 export { ApiError } from "@/lib/errors";
 
@@ -23,6 +29,7 @@ export type SessionUser = {
   role: UserRole;
   organizationId: string;
   mustChangePassword: boolean;
+  permissions?: UserPermissions;
 };
 export type User = SessionUser & { createdAt: string };
 
@@ -91,6 +98,18 @@ export async function getSessionUser(request: Request, allowPasswordChange = fal
   if (account.must_change_password && !allowPasswordChange) {
     throw new ApiError(403, "Altere sua senha inicial para continuar.");
   }
+  const hasStoredPermissions = account.permissions !== undefined && account.permissions !== null;
+  if (account.role !== "admin" && hasStoredPermissions && !isUserPermissions(account.permissions)) {
+    throw new ApiError(403, "As permissões desta conta estão inválidas. Peça ao administrador para revisá-las.");
+  }
+  const permissions = isUserPermissions(account.permissions) ? account.permissions : undefined;
+  const access = permissionForRequest(request);
+  const allowed = access && (Array.isArray(access.section)
+    ? access.section.some((section) => canAccessSection(permissions, section, access.action))
+    : canAccessSection(permissions, access.section, access.action));
+  if (access && account.role !== "admin" && !allowed) {
+    throw new ApiError(403, "Você não tem permissão para acessar esta área.");
+  }
   return {
     uid: account.id,
     email: String(account.email),
@@ -98,7 +117,40 @@ export async function getSessionUser(request: Request, allowPasswordChange = fal
     role: account.role as UserRole,
     organizationId: String(account.organization_id),
     mustChangePassword: Boolean(account.must_change_password),
+    permissions,
   };
+}
+
+function permissionForRequest(request: Request): { section: PermissionSection | PermissionSection[]; action: "view" | "edit" } | null {
+  const path = new URL(request.url).pathname.replace(/\/+$/, "");
+  const method = request.method.toUpperCase();
+  const summaryOnly = new URL(request.url).searchParams.get("summary") === "1";
+  const action = method === "GET" || method === "HEAD" ? "view" : "edit";
+  if (path === "/api/assets" || path.startsWith("/api/assets/")) {
+    if (path === "/api/assets" && summaryOnly) return { section: "overview", action };
+    return { section: /\/fuel(?:\/|$)/.test(path) ? "fuel" : "assets", action };
+  }
+  if (path === "/api/maintenance") return { section: "maintenance", action };
+  if (path === "/api/service-orders" || path.startsWith("/api/service-orders/")) return { section: "orders", action };
+  if (path === "/api/inspections" || path.startsWith("/api/inspections/")) return { section: "inspections", action };
+  if (path === "/api/inventory" || path.startsWith("/api/inventory/")) return { section: "inventory", action };
+  if (path === "/api/purchase-requests" || path.startsWith("/api/purchase-requests/")) return { section: "purchases", action };
+  if (path === "/api/reports") return { section: "reports", action };
+  if (path === "/api/notifications") {
+    return method === "GET"
+      ? { section: ["overview", "maintenance", "settings"], action }
+      : { section: "settings", action };
+  }
+  if (path === "/api/asset-options" || path === "/api/units") {
+    return { section: method === "GET" ? "assets" : "settings", action };
+  }
+  return null;
+}
+
+export function requireSectionPermission(user: SessionUser, section: PermissionSection, action: "view" | "edit") {
+  if (!canAccessSection(user.permissions, section, action)) {
+    throw new ApiError(403, "Você não tem permissão para executar esta ação.");
+  }
 }
 
 export async function deleteSession(request: Request) {

@@ -69,6 +69,7 @@ Os endpoints de backup SQLite e a restauração local pelo painel foram desativa
 - **Ativos** — cadastro detalhado, responsável, unidade, ficha e QR Code.
 - **Preventivas**, **Ordens**, **Inspeções**, **Estoque**, **Compras** e **Relatórios**.
 - **Usuários**, **Auditoria** e configurações administrativas.
+- Administradores podem definir, por usuário e por tela, **Sem acesso**, **Somente visualizar** ou **Visualizar e editar**. Essas permissões são verificadas nas APIs, não apenas na navegação; usuários e auditoria e as configurações administrativas continuam restritos a administradores.
 - As APIs verificam a organização e, para usuários comuns, restringem dados aos ativos vinculados ao usuário.
 
 ```powershell

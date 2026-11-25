@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { ApiError, createId, createUserRecord, getDatabase, getRecord, getSessionToken, getSessionUser, handleApiError, hashPassword, readJson, requireAdmin, verifyPassword, writeAudit } from "@/lib/api";
+import { defaultUserPermissions, isUserPermissions } from "@/lib/permissions";
 
 export const runtime = "nodejs";
 
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
     await createUserRecord(uid, email, {
       email, display_name: displayName, password_hash: hashPassword(password), role,
       organization_id: requester.organizationId, active: true, must_change_password: true,
-      email_notifications: false, created_at: new Date().toISOString(),
+      email_notifications: false, permissions: defaultUserPermissions, created_at: new Date().toISOString(),
     });
     await writeAudit(requester.organizationId, requester.uid, "user.created", "user", email, { email, role });
     return NextResponse.json({ ok: true }, { status: 201 });
@@ -69,6 +70,7 @@ export async function GET(request: Request) {
         uid: doc.id, email: user.email, displayName: user.display_name, role: user.role,
         createdAt: user.created_at, active: user.active ? 1 : 0,
         mustChangePassword: user.must_change_password ? 1 : 0,
+        permissions: isUserPermissions(user.permissions) ? user.permissions : null,
       };
     }).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     return NextResponse.json({ users });

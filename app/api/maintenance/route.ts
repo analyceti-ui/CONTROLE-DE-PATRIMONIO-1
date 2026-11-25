@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, organizationScopedAsset, readJson, requireAdmin, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, organizationScopedAsset, readJson, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -39,7 +39,6 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await getSessionUser(request);
-    requireAdmin(user);
     const body = await readJson(request);
     const assetId = typeof body.assetId === "string" ? body.assetId : "";
     const intervalDays = body.intervalDays === null || body.intervalDays === "" ? null : Number(body.intervalDays);

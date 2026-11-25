@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getDatabase, getRecord, getSessionUser, handleApiError, readJson, requireAdmin, requireOrganizationUser, writeAudit } from "@/lib/api";
+import { ApiError, getDatabase, getRecord, getSessionUser, handleApiError, readJson, requireOrganizationUser, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id: string }> };
@@ -8,7 +8,6 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function PATCH(request: Request, context: RouteContext) {
   try {
     const user = await getSessionUser(request);
-    requireAdmin(user);
     const { id } = await context.params;
     const body = await readJson(request);
     const item = await getRecord("inventory_items", id);

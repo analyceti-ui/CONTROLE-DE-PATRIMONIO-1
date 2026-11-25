@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getSessionUser, handleApiError, listRecords, readJson, requireAdmin, setRecord, writeAudit } from "@/lib/api";
+import { ApiError, getSessionUser, handleApiError, listRecords, readJson, setRecord, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,6 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await getSessionUser(request);
-    requireAdmin(user);
     const body = await readJson(request);
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const sku = typeof body.sku === "string" ? body.sku.trim() : "";

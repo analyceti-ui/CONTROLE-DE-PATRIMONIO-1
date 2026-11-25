@@ -1,11 +1,19 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { fuelTypes } from "@/lib/fuel";
 import type { UserRole } from "@/lib/api";
+import {
+  canAccessSection,
+  defaultUserPermissions,
+  permissionSections,
+  type PermissionLevel,
+  type PermissionSection,
+  type UserPermissions,
+} from "@/lib/permissions";
 
 type Asset = {
   id: string;
@@ -51,8 +59,8 @@ type AssetEditForm = {
   sharedWithUids: string[];
 };
 
-type Profile = { uid: string; email: string; displayName: string; role: UserRole; organizationId: string; mustChangePassword: boolean };
-type User = { uid: string; email: string; displayName: string; role: UserRole; active: number; mustChangePassword: number };
+type Profile = { uid: string; email: string; displayName: string; role: UserRole; organizationId: string; mustChangePassword: boolean; permissions?: UserPermissions };
+type User = { uid: string; email: string; displayName: string; role: UserRole; active: number; mustChangePassword: number; permissions: UserPermissions | null };
 type ServiceOrder = {
   id: string;
   asset_id: string;
@@ -151,6 +159,11 @@ function getNotificationKey(alert: NotificationAlert) {
   return `${alert.kind}:${alert.assetId}:${alert.dueDate ?? alert.dueValue ?? ""}:${phase}`;
 }
 
+function getPermissionSection(section: string): PermissionSection | null {
+  const normalized = section.startsWith("settings-") ? "settings" : section;
+  return permissionSections.some(({ id }) => id === normalized) ? normalized as PermissionSection : null;
+}
+
 function playNotificationTone(context: AudioContext | null) {
   if (!context || context.state !== "running") return;
   const startAt = context.currentTime;
@@ -244,6 +257,8 @@ export default function DashboardPage({ section }: { section: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [permissionEditorFor, setPermissionEditorFor] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<UserPermissions>(defaultUserPermissions);
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [orderFields, setOrderFields] = useState<Record<string, OrderFields>>({});
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -261,6 +276,7 @@ export default function DashboardPage({ section }: { section: string }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [externalDeliveryConfigured, setExternalDeliveryConfigured] = useState(false);
   const [organization, setOrganization] = useState<{ id: string; name: string } | null>(null);
+  const [overviewTotals, setOverviewTotals] = useState({ count: 0, inUse: 0 });
   const [reportTotals, setReportTotals] = useState({ count: 0, purchaseCost: 0, inUse: 0, inMaintenance: 0, withoutOwner: 0 });
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [inAppNotifications, setInAppNotifications] = useState(true);
@@ -389,11 +405,27 @@ export default function DashboardPage({ section }: { section: string }) {
         setLoading(false);
         return;
       }
+      const protectedSection = ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(section);
+      const legacyRoleRestrictedSection = !profileData.permissions && ["orders", "inventory"].includes(section);
+      if (profileData.role !== "admin" && (protectedSection || legacyRoleRestrictedSection)) {
+        setLoading(false);
+        return;
+      }
+      const currentPermissionSection = getPermissionSection(section);
+      if (profileData.role !== "admin" && profileData.permissions &&
+        (!currentPermissionSection || !canAccessSection(profileData.permissions, currentPermissionSection, "view"))) {
+        setLoading(false);
+        return;
+      }
 
-      if (section === "assets" || section === "overview" || section === "reports" || section === "fuel") {
+      if (section === "assets" || section === "fuel") {
         const assetResponse = await api("/api/assets");
         const assetData = await responseData<{ items: Asset[] }>(assetResponse);
         setAssets(assetData.items);
+      }
+
+      if (section === "overview") {
+        setOverviewTotals(await responseData<{ count: number; inUse: number }>(await api("/api/assets?summary=1")));
       }
 
       if (section === "assets") {
@@ -404,15 +436,16 @@ export default function DashboardPage({ section }: { section: string }) {
         setUnits((await responseData<{ units: Unit[] }>(unitsResponse)).units);
       }
 
-      if (section === "overview" || section === "maintenance") {
-        const [notificationResponse, maintenanceResponse] = await Promise.all([api("/api/notifications"), api("/api/maintenance")]);
-        const notificationData = await responseData<{ preferences: { inApp: number; emailEnabled: number }; alerts: NotificationAlert[]; externalDeliveryConfigured: boolean }>(notificationResponse);
+      if (section === "overview" || section === "maintenance" || section === "settings-notifications") {
+        const notificationData = await responseData<{ preferences: { inApp: number; emailEnabled: number }; alerts: NotificationAlert[]; externalDeliveryConfigured: boolean }>(await api("/api/notifications"));
         setInAppNotifications(Boolean(notificationData.preferences.inApp));
         setEmailNotifications(Boolean(notificationData.preferences.emailEnabled));
         setNotificationAlerts(notificationData.alerts);
         notificationKeysRef.current = new Set(notificationData.alerts.map(getNotificationKey));
         setExternalDeliveryConfigured(notificationData.externalDeliveryConfigured);
-        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(maintenanceResponse)).plans);
+        if (section === "maintenance") {
+          setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
+        }
       }
 
       if (section === "orders") {
@@ -433,9 +466,6 @@ export default function DashboardPage({ section }: { section: string }) {
       }
       if (section === "reports") {
         setReportTotals((await responseData<{ totals: typeof reportTotals }>(await api("/api/reports"))).totals);
-      }
-      if (section === "fuel") {
-        setMaintenancePlans((await responseData<{ plans: MaintenancePlan[] }>(await api("/api/maintenance"))).plans);
       }
       if (profileData.role === "admin" && (section === "users" || section === "settings" || section === "overview" || section === "audit")) {
         if (section === "users" || section === "settings" || section === "overview") {
@@ -667,7 +697,7 @@ export default function DashboardPage({ section }: { section: string }) {
 
   useEffect(() => {
     const adminSettings = ["settings-equipment", "settings-organization", "settings-backup"];
-    if (profile && profile.role !== "admin" && (["users", "audit", "orders", "inventory"].includes(section) || adminSettings.includes(section))) {
+    if (profile && profile.role !== "admin" && (["users", "audit"].includes(section) || adminSettings.includes(section))) {
       router.replace("/painel");
     }
   }, [profile, router, section]);
@@ -1149,6 +1179,31 @@ export default function DashboardPage({ section }: { section: string }) {
     }
   }
 
+  function togglePermissionEditor(user: User) {
+    if (permissionEditorFor === user.uid) {
+      setPermissionEditorFor(null);
+      return;
+    }
+    setPermissionDraft(user.permissions ?? defaultUserPermissions);
+    setPermissionEditorFor(user.uid);
+  }
+
+  async function saveUserPermissions(user: User) {
+    setError("");
+    setNotice("");
+    try {
+      await responseData(await api(`/api/users/${user.uid}`, {
+        method: "PATCH",
+        body: JSON.stringify({ permissions: permissionDraft }),
+      }));
+      setPermissionEditorFor(null);
+      setNotice(`Permissões de ${user.email} atualizadas.`);
+      await loadData();
+    } catch (permissionError) {
+      setError(permissionError instanceof Error ? permissionError.message : "Não foi possível salvar as permissões.");
+    }
+  }
+
   async function addUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreatingUser(true);
@@ -1444,6 +1499,60 @@ export default function DashboardPage({ section }: { section: string }) {
     router.replace("/");
   }
 
+  function renderPermissionEditor(user: User) {
+    if (permissionEditorFor !== user.uid) return null;
+    return <div className="permission-editor">
+      <div className="permission-grid">
+        {permissionSections.filter(({ id }) => id !== "users" && id !== "audit").map(({ id, label }) => (
+          <label key={id}>{label}
+            <select
+              aria-label={`Permissão de ${user.email} para ${label}`}
+              value={permissionDraft[id]}
+              onChange={(event) => setPermissionDraft((current) => {
+                const level = event.target.value as PermissionLevel;
+                const next = { ...current, [id]: level };
+                const assetLinked: PermissionSection[] = ["maintenance", "orders", "inspections", "fuel"];
+                if (id === "assets" && level === "none") {
+                  for (const linkedSection of assetLinked) next[linkedSection] = "none";
+                } else if (assetLinked.includes(id) && level !== "none" && next.assets === "none") {
+                  next.assets = "view";
+                }
+                return next;
+              })}
+            >
+              <option value="none">Sem acesso</option>
+              <option value="view">Somente visualizar</option>
+              <option value="edit">Visualizar e editar</option>
+            </select>
+          </label>
+        ))}
+      </div>
+      <small className="form-help">Preventivas, ordens, inspeções e abastecimento dependem de ao menos visualização de Equipamentos.</small>
+      <small className="form-help">Usuários, auditoria e configurações administrativas continuam exclusivos de administradores.</small>
+      {user.permissions === null && <small className="form-help">Esta conta ainda usa as permissões antigas. Salvar aplicará as permissões selecionadas.</small>}
+      <div className="inline-actions">
+        <button className="button button-primary compact-button" type="button" onClick={() => void saveUserPermissions(user)}>Salvar permissões</button>
+        <button className="button button-secondary compact-button" type="button" onClick={() => setPermissionEditorFor(null)}>Cancelar</button>
+      </div>
+    </div>;
+  }
+
+  function canView(target: string) {
+    const targetSection = getPermissionSection(target);
+    if (profile?.role === "admin") return true;
+    if (!profile || ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(target)) return false;
+    if (!profile.permissions) return target !== "orders" && target !== "inventory";
+    return Boolean(targetSection && canAccessSection(profile.permissions, targetSection, "view"));
+  }
+
+  function canEdit(target: string) {
+    const targetSection = getPermissionSection(target);
+    if (profile?.role === "admin") return true;
+    if (!profile || ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(target)) return false;
+    if (!profile.permissions) return canView(target);
+    return Boolean(targetSection && canAccessSection(profile.permissions, targetSection, "edit"));
+  }
+
   if (loading) {
     return <main className="loading-screen"><span className="spinner" /> Carregando seus ativos...</main>;
   }
@@ -1469,25 +1578,36 @@ export default function DashboardPage({ section }: { section: string }) {
     );
   }
 
-  if (profile && profile.role !== "admin" && ["orders", "inventory", "users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(section)) {
+  if (profile && profile.role !== "admin" && ["users", "audit", "settings-equipment", "settings-organization", "settings-backup"].includes(section)) {
     return <main className="loading-screen"><span className="spinner" /> Redirecionando para o painel...</main>;
   }
 
+  if (profile && !canView(section)) {
+    return <main className="loading-screen permission-denied">
+      <section className="permission-denied-card">
+        <span className="eyebrow">ACESSO RESTRITO</span>
+        <h1>Você não tem acesso a esta tela</h1>
+        <p>Peça ao administrador para ajustar suas permissões.</p>
+        <button className="button button-secondary" type="button" onClick={() => void logout()}>Sair da conta</button>
+      </section>
+    </main>;
+  }
+
   return (
-    <main className="dashboard-page" data-theme={darkMode ? "dark" : "light"}>
+    <main className="dashboard-page" data-theme={darkMode ? "dark" : "light"} data-can-edit={canEdit(section)}>
       <aside className="sidebar">
         <Link className="brand" href="/painel"><span className="brand-mark">P</span> patrimônio</Link>
         <div className="side-label">MENU PRINCIPAL</div>
-        <Link className={`side-link ${section === "overview" ? "active" : ""}`} href="/painel"><span>▦</span> Visão geral</Link>
-        <Link className={`side-link ${section === "assets" ? "active" : ""}`} href="/painel/assets"><span>◫</span> Equipamentos</Link>
-        <Link className={`side-link alert-nav ${section === "maintenance" ? "active" : ""}`} href="/painel/maintenance"><span>♢</span> Preventivas{preventiveNotifications.length > 0 && <b className="nav-count">{preventiveNotifications.length}</b>}</Link>
-        {profile?.role === "admin" && <Link className={`side-link ${section === "orders" ? "active" : ""}`} href="/painel/orders"><span>⚒</span> Ordens</Link>}
-        <Link className={`side-link ${section === "inspections" ? "active" : ""}`} href="/painel/inspections"><span>✓</span> Inspeções</Link>
-        <Link className={`side-link ${section === "fuel" ? "active" : ""}`} href="/painel/fuel"><span>⛽</span> Abastecimento</Link>
-        {profile?.role === "admin" && <Link className={`side-link ${section === "inventory" ? "active" : ""}`} href="/painel/inventory"><span>▤</span> Estoque</Link>}
-        <Link className={`side-link ${section === "purchases" ? "active" : ""}`} href="/painel/purchases"><span>▣</span> Compras</Link>
-        <Link className={`side-link ${section === "reports" ? "active" : ""}`} href="/painel/reports"><span>▧</span> Relatórios</Link>
-        <Link className={`side-link ${section === "settings" || section.startsWith("settings-") ? "active" : ""}`} href="/painel/settings"><span>⚙</span> Configurações</Link>
+        {canView("overview") && <Link className={`side-link ${section === "overview" ? "active" : ""}`} href="/painel"><span>▦</span> Visão geral</Link>}
+        {canView("assets") && <Link className={`side-link ${section === "assets" ? "active" : ""}`} href="/painel/assets"><span>◫</span> Equipamentos</Link>}
+        {canView("maintenance") && <Link className={`side-link alert-nav ${section === "maintenance" ? "active" : ""}`} href="/painel/maintenance"><span>♢</span> Preventivas{preventiveNotifications.length > 0 && <b className="nav-count">{preventiveNotifications.length}</b>}</Link>}
+        {canView("orders") && <Link className={`side-link ${section === "orders" ? "active" : ""}`} href="/painel/orders"><span>⚒</span> Ordens</Link>}
+        {canView("inspections") && <Link className={`side-link ${section === "inspections" ? "active" : ""}`} href="/painel/inspections"><span>✓</span> Inspeções</Link>}
+        {canView("fuel") && <Link className={`side-link ${section === "fuel" ? "active" : ""}`} href="/painel/fuel"><span>⛽</span> Abastecimento</Link>}
+        {canView("inventory") && <Link className={`side-link ${section === "inventory" ? "active" : ""}`} href="/painel/inventory"><span>▤</span> Estoque</Link>}
+        {canView("purchases") && <Link className={`side-link ${section === "purchases" ? "active" : ""}`} href="/painel/purchases"><span>▣</span> Compras</Link>}
+        {canView("reports") && <Link className={`side-link ${section === "reports" ? "active" : ""}`} href="/painel/reports"><span>▧</span> Relatórios</Link>}
+        {canView("settings") && <Link className={`side-link ${section === "settings" || section.startsWith("settings-") ? "active" : ""}`} href="/painel/settings"><span>⚙</span> Configurações</Link>}
         {profile?.role === "admin" && <>
           <Link className={`side-link ${section === "users" ? "active" : ""}`} href="/painel/users"><span>♙</span> Usuários</Link>
           <Link className={`side-link ${section === "audit" ? "active" : ""}`} href="/painel/audit"><span>◷</span> Auditoria</Link>
@@ -1567,13 +1687,14 @@ export default function DashboardPage({ section }: { section: string }) {
             <span className="today-date">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(new Date())}</span>
           </div>
 
+          {!canEdit(section) && <div className="notice read-only-notice" role="status">Modo somente visualização. Você não pode alterar informações nesta tela.</div>}
           {error && <div className="notice error-notice" role="alert">{error}</div>}
           {notice && <div className="notice success-notice" role="status">{notice}</div>}
 
           {section === "overview" && <div className="stats-grid">
-            <article className="stat-card"><span className="stat-icon blue">▦</span><span className="stat-label">ATIVOS CADASTRADOS</span><strong>{assets.length}</strong><small>Itens sob acompanhamento</small></article>
+            <article className="stat-card"><span className="stat-icon blue">▦</span><span className="stat-label">ATIVOS CADASTRADOS</span><strong>{overviewTotals.count}</strong><small>Itens sob acompanhamento</small></article>
             <article className="stat-card"><span className="stat-icon amber">◷</span><span className="stat-label">AVISOS DE PREVENTIVA</span><strong>{preventiveAlertCount}</strong><small>Por data, km ou horas de uso</small></article>
-            <article className="stat-card"><span className="stat-icon green">✓</span><span className="stat-label">EM USO</span><strong>{assets.filter((asset) => asset.status === "Em uso").length}</strong><small>Ativos em operação</small></article>
+            <article className="stat-card"><span className="stat-icon green">✓</span><span className="stat-label">EM USO</span><strong>{overviewTotals.inUse}</strong><small>Ativos em operação</small></article>
             {profile?.role === "admin" && <article className="stat-card"><span className="stat-icon violet">♙</span><span className="stat-label">USUÁRIOS</span><strong>{users.length}</strong><small>Contas cadastradas</small></article>}
           </div>}
 
@@ -2014,7 +2135,7 @@ export default function DashboardPage({ section }: { section: string }) {
           {profile?.role === "admin" && section === "users" && (
             <section className="panel user-panel" id="usuarios">
               <div className="panel-heading">
-                <div><span className="eyebrow">ACESSOS</span><h2>Usuários</h2><p>Gerencie quem pode administrar o sistema.</p></div>
+                <div><span className="eyebrow">ACESSOS</span><h2>Usuários</h2><p>Gerencie perfis e defina quais telas cada usuário pode visualizar ou editar.</p></div>
                 <div className="record-tools">
                   <label className="search-box"><span>⌕</span><input value={recordQueries.users} onChange={(event) => setRecordQueries((previous) => ({ ...previous, users: event.target.value }))} placeholder="Buscar usuário..." aria-label="Buscar usuário" /></label>
                   <RecordViewToggle value={recordViews.users} onChange={(view) => changeRecordView("users", view)} label="usuários" />
@@ -2026,13 +2147,14 @@ export default function DashboardPage({ section }: { section: string }) {
                 <label>Nome<input required maxLength={100} value={newUser.name} onChange={(event) => setNewUser({ ...newUser, name: event.target.value })} placeholder="Nome da pessoa" /></label>
                 <label>E-mail<input required type="email" maxLength={254} value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} placeholder="pessoa@empresa.com.br" /></label>
                 <label>Senha inicial<input required type="password" minLength={8} maxLength={128} autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} placeholder="Mínimo de 8 caracteres" /></label>
-                <p className="form-help wide-field">A nova conta começa como Usuário. Se necessário, altere o perfil na lista após o cadastro.</p>
+                <p className="form-help wide-field">A nova conta começa como Usuário, com permissões iniciais de acesso básico. Ajuste cada tela na lista após o cadastro.</p>
                 <button className="button button-primary add-button" type="submit" disabled={creatingUser}>{creatingUser ? "Criando..." : "+ Criar acesso"}</button>
               </form>}
               {recordViews.users === "list" ? <div className="table-scroll">
                 <table>
                   <thead><tr><th>USUÁRIO</th><th>E-MAIL</th><th>PERFIL</th><th>CONTA</th><th>AÇÕES</th></tr></thead>
                   <tbody>{users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).map((user) => (
+                    <Fragment key={user.uid}>
                     <tr key={user.uid}>
                       <td><div className="asset-name"><span className="avatar small">{(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span><strong>{user.displayName || "Sem nome"}</strong></div></td>
                       <td>{user.email}</td>
@@ -2045,14 +2167,18 @@ export default function DashboardPage({ section }: { section: string }) {
                       <td><div className="inline-actions">
                         {user.uid !== profile.uid && <button className="button button-secondary compact-button" type="button" onClick={() => void setUserActive(user, !user.active)}>{user.active ? "Desativar" : "Ativar"}</button>}
                         <button className="button button-secondary compact-button" type="button" onClick={() => void resetUserPassword(user)}>Redefinir senha</button>
+                        {user.role === "user" && <button className="button button-secondary compact-button" type="button" aria-expanded={permissionEditorFor === user.uid} onClick={() => togglePermissionEditor(user)}>{permissionEditorFor === user.uid ? "Fechar permissões" : "Permissões"}</button>}
                       </div></td>
                     </tr>
+                    {permissionEditorFor === user.uid && <tr key={`${user.uid}-permissions`}><td colSpan={5}>{renderPermissionEditor(user)}</td></tr>}
+                    </Fragment>
                   ))}{!users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).length && <tr><td colSpan={5} className="empty-cell">{users.length ? "Nenhum usuário corresponde à busca." : "Nenhum usuário cadastrado."}</td></tr>}</tbody>
                 </table>
               </div> : <div className="record-card-grid">{users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).map((user) => <article className="record-card" key={user.uid}>
                 <div className="record-card-heading"><div className="user-record-identity"><span className="avatar">{(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span><div><span className="eyebrow">{user.email}</span><h3>{user.displayName || "Sem nome"}</h3></div></div><span className={`badge ${user.active ? "badge-green" : "badge-neutral"}`}>{user.active ? "Ativa" : "Desativada"}</span></div>
                 <div className="record-card-user-role"><label>Perfil<select aria-label={`Perfil de ${user.email}`} value={user.role} disabled={user.uid === profile.uid && user.role === "admin"} onChange={(event) => void changeRole(user, event.target.value as UserRole)}><option value="user">Usuário</option><option value="admin">Administrador</option></select></label>{user.mustChangePassword === 1 && <small className="form-help">Senha inicial pendente</small>}</div>
-                <div className="inline-actions">{user.uid !== profile.uid && <button className="button button-secondary compact-button" type="button" onClick={() => void setUserActive(user, !user.active)}>{user.active ? "Desativar" : "Ativar"}</button>}<button className="button button-secondary compact-button" type="button" onClick={() => void resetUserPassword(user)}>Redefinir senha</button></div>
+                <div className="inline-actions">{user.uid !== profile.uid && <button className="button button-secondary compact-button" type="button" onClick={() => void setUserActive(user, !user.active)}>{user.active ? "Desativar" : "Ativar"}</button>}<button className="button button-secondary compact-button" type="button" onClick={() => void resetUserPassword(user)}>Redefinir senha</button>{user.role === "user" && <button className="button button-secondary compact-button" type="button" aria-expanded={permissionEditorFor === user.uid} onClick={() => togglePermissionEditor(user)}>{permissionEditorFor === user.uid ? "Fechar permissões" : "Permissões"}</button>}</div>
+                {renderPermissionEditor(user)}
               </article>)}{!users.filter((user) => [user.displayName, user.email, user.role, user.active ? "ativa" : "desativada"].join(" ").toLocaleLowerCase("pt-BR").includes(recordQueries.users.trim().toLocaleLowerCase("pt-BR"))).length && <p className="empty-panel">{users.length ? "Nenhum usuário corresponde à busca." : "Nenhum usuário cadastrado."}</p>}</div>}
             </section>
           )}
