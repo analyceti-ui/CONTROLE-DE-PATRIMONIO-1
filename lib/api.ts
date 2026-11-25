@@ -1,5 +1,6 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual, randomUUID } from "node:crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { NextResponse } from "next/server";
 import {
   deleteRecord,
@@ -7,6 +8,7 @@ import {
   getRecord,
   getFirestoreDb,
   listRecords,
+  listRecordsMatchingAny,
   nowIso,
   setRecord,
   type RecordData,
@@ -27,7 +29,6 @@ export type SessionUser = {
 export type User = SessionUser & { createdAt: string };
 
 export async function getFirebaseAuth() {
-  const { getAuth } = await import("firebase-admin/auth");
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   let privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
@@ -35,7 +36,9 @@ export async function getFirebaseAuth() {
     try {
       const parsed = JSON.parse(privateKey);
       if (typeof parsed === "string") privateKey = parsed;
-    } catch {}
+    } catch {
+      privateKey = privateKey.slice(1, -1);
+    }
   }
   privateKey = privateKey?.replace(/\\n/g, "\n");
   if (!projectId || !clientEmail || !privateKey) {
@@ -237,4 +240,4 @@ export async function getOrganizationRecords<T extends RecordData = RecordData>(
   return listRecords<T>(collection, { organization_id: organizationId });
 }
 
-export { deleteRecord, deleteRecords, getRecord, getFirestoreDb, listRecords, nowIso, setRecord };
+export { deleteRecord, deleteRecords, getRecord, getFirestoreDb, listRecords, listRecordsMatchingAny, nowIso, setRecord };

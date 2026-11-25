@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getSessionUser, handleApiError, listRecords, nowIso, organizationScopedAsset, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, organizationScopedAsset, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
 import { deleteImage, uploadImage } from "@/lib/cloudinary";
 
 export const runtime = "nodejs";
@@ -9,12 +9,10 @@ const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser(request);
-    const [assets, rows, users] = await Promise.all([
-      listRecords("assets", { organization_id: user.organizationId }),
-      listRecords("inspections"),
-      listRecords("users", { organization_id: user.organizationId }),
-    ]);
+    const assets = await listRecords("assets", { organization_id: user.organizationId });
     const assetMap = new Map(assets.filter((asset) => user.role === "admin" || asset.owner_uid === user.uid).map((asset) => [asset.id, asset]));
+    const rows = await listRecordsMatchingAny("inspections", "asset_id", [...assetMap.keys()]);
+    const users = await listRecordsMatchingAny("users", "__name__", [...new Set(rows.map((entry) => String(entry.user_uid ?? "")).filter(Boolean))]);
     const userMap = new Map(users.map((person) => [person.id, person]));
     const inspections = rows.filter((entry) => assetMap.has(String(entry.asset_id)))
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 500)

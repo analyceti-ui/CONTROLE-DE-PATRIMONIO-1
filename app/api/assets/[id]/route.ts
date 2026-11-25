@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ApiError, deleteRecord, deleteRecords, getRecord, getSessionUser, handleApiError, listRecords, nowIso, requireOrganizationUser, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, deleteRecord, deleteRecords, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, requireOrganizationUser, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
 import { deleteImage } from "@/lib/cloudinary";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -20,20 +20,34 @@ export async function GET(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const { user, asset } = await loadAsset(request, id);
-    const [owner, histories, inspections, serviceOrders, photos, transfers, users, transferPhotos] = await Promise.all([
-      getRecord("users", String(asset.owner_uid)),
+    const [histories, inspections, serviceOrders, photos, transfers] = await Promise.all([
       listRecords("asset_history", { asset_id: id }),
       listRecords("inspections", { asset_id: id }),
       listRecords("service_orders", { asset_id: id }),
       listRecords("asset_photos", { asset_id: id }),
       listRecords("asset_transfers", { asset_id: id }),
-      listRecords("users", { organization_id: user.organizationId }),
-      listRecords("asset_transfer_photos"),
     ]);
+    const transferPhotos = await listRecordsMatchingAny(
+      "asset_transfer_photos",
+      "transfer_id",
+      transfers.map((transfer) => transfer.id),
+    );
+    const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
+    const userIds = [...new Set([
+      String(asset.owner_uid ?? ""),
+      ...sharedWithUids,
+      ...histories.map((entry) => String(entry.actor_uid ?? "")),
+      ...transfers.flatMap((transfer) => [
+        String(transfer.from_uid ?? ""),
+        String(transfer.to_uid ?? ""),
+        String(transfer.actor_uid ?? ""),
+      ]),
+    ].filter(Boolean))];
+    const users = await listRecordsMatchingAny("users", "__name__", userIds);
     const people = new Map(users.map((person) => [person.id, person]));
+    const owner = people.get(String(asset.owner_uid));
     const sortRecent = <T extends Record<string, unknown> & { id: string }>(records: T[]) =>
       records.sort((a, b) => String(b["created_at"] ?? "").localeCompare(String(a["created_at"] ?? ""))).slice(0, 100);
-    const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
     const visibleAsset = user.role === "admin" ? {
       ...asset,
       shared_with_uids: sharedWithUids,
@@ -87,16 +101,20 @@ export async function DELETE(request: Request, context: RouteContext) {
     const { id } = await context.params;
     const { user, asset } = await loadAsset(request, id);
     if (user.role !== "admin" && asset.owner_uid !== user.uid) throw new ApiError(403, "Você não tem permissão para remover este ativo.");
-    const [assetPhotos, transferRecords, inspections, fuelRecords, serviceOrders, stockTransactions] = await Promise.all([
+    const [assetPhotos, transferRecords, inspections, fuelRecords, serviceOrders] = await Promise.all([
       listRecords("asset_photos", { asset_id: id }),
       listRecords("asset_transfers", { asset_id: id }),
       listRecords("inspections", { asset_id: id }),
       listRecords("vehicle_fuel_records", { asset_id: id }),
       listRecords("service_orders", { asset_id: id }),
-      listRecords("inventory_transactions"),
     ]);
+    const stockTransactions = await listRecordsMatchingAny(
+      "inventory_transactions",
+      "service_order_id",
+      serviceOrders.map((order) => order.id),
+    );
     const transferIds = new Set(transferRecords.map((item) => item.id));
-    const transferPhotos = (await listRecords("asset_transfer_photos")).filter((photo) => transferIds.has(String(photo.transfer_id)));
+    const transferPhotos = await listRecordsMatchingAny("asset_transfer_photos", "transfer_id", [...transferIds]);
     for (const [entries, fields] of [
       [assetPhotos, ["cloudinary_public_id"]],
       [transferPhotos, ["cloudinary_public_id"]],

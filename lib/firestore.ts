@@ -1,50 +1,26 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
-import type { Auth } from "firebase-admin/auth";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { FieldPath, getFirestore, type Firestore } from "firebase-admin/firestore";
 import { ApiError } from "@/lib/errors";
 
 let firestore: Firestore | undefined;
-let firebaseAuth: Auth | undefined;
 
-function getAdminApp() {
-  const existing = getApps()[0];
-  if (existing) return existing;
+export function getFirestoreDb() {
+  if (firestore) return firestore;
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
-  if (privateKey?.startsWith('"') && privateKey.endsWith('"')) {
-    try {
-      const parsed: unknown = JSON.parse(privateKey);
-      if (typeof parsed === "string") privateKey = parsed;
-    } catch {
-      privateKey = privateKey.slice(1, -1);
-    }
-  }
-  privateKey = privateKey?.replace(/\\n/g, "\n").trim();
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
   if (!projectId || !clientEmail || !privateKey) {
     throw new ApiError(
       503,
       "Firebase não está configurado. Defina FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL e FIREBASE_PRIVATE_KEY nas variáveis de ambiente.",
     );
   }
-  return initializeApp({
+  const app = getApps()[0] ?? initializeApp({
     credential: cert({ projectId, clientEmail, privateKey }),
     projectId,
   });
-}
-
-export function getFirestoreDb() {
-  if (firestore) return firestore;
-  const app = getAdminApp();
   firestore = getFirestore(app);
   return firestore;
-}
-
-export async function getFirebaseAuth(): Promise<Auth> {
-  if (firebaseAuth) return firebaseAuth;
-  const { getAuth } = await import("firebase-admin/auth");
-  firebaseAuth = getAuth(getAdminApp());
-  return firebaseAuth;
 }
 
 export type RecordData = Record<string, unknown> & { id: string };
@@ -65,6 +41,28 @@ export async function listRecords<T extends RecordData = RecordData>(
   for (const [field, value] of Object.entries(filters)) query = query.where(field, "==", value);
   const snapshot = await query.get();
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as T);
+}
+
+export async function listRecordsMatchingAny<T extends RecordData = RecordData>(
+  collection: string,
+  field: string,
+  candidateValues: readonly unknown[],
+): Promise<T[]> {
+  const values = [...new Set(candidateValues.filter((value) => value !== null && value !== undefined))];
+  if (!values.length) return [];
+
+  const db = getFirestoreDb();
+  const queryField = field === "__name__" ? FieldPath.documentId() : field;
+  const snapshots = await Promise.all(
+    Array.from({ length: Math.ceil(values.length / 30) }, (_, index) =>
+      db.collection(collection)
+        .where(queryField, "in", values.slice(index * 30, (index + 1) * 30))
+        .get(),
+    ),
+  );
+  return snapshots.flatMap((snapshot) =>
+    snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as T),
+  );
 }
 
 export async function setRecord(

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import DashboardPage from "../dashboard";
 
@@ -22,5 +23,7 @@ export default async function PanelSectionPage({
 }) {
   const { section } = await params;
   if (!sections.has(section)) notFound();
-  return <DashboardPage section={section} />;
+  return <Suspense fallback={<div className="loading-screen" role="status"><span className="spinner" />Carregando painel...</div>}>
+    <DashboardPage section={section} />
+  </Suspense>;
 }

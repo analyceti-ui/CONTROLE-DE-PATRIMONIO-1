@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { UserRole } from "@/lib/api";
 
 type Asset = {
@@ -230,6 +230,8 @@ function auditDetailsLabel(rawDetails: string) {
 
 export default function DashboardPage({ section }: { section: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedAssetId = searchParams.get("asset");
   const notificationPanelRef = useRef<HTMLDivElement>(null);
   const notificationKeysRef = useRef<Set<string> | null>(null);
   const loadDataRunningRef = useRef(false);
@@ -427,7 +429,6 @@ export default function DashboardPage({ section }: { section: string }) {
         }
       }
 
-      let sectionAssets: Asset[] | null = null;
       const profileData = await responseData<Profile>(await api("/api/auth/profile"));
       setProfile(profileData);
       if (profileData.mustChangePassword) {
@@ -443,7 +444,6 @@ export default function DashboardPage({ section }: { section: string }) {
         const assetResponse = await api("/api/assets");
         const assetData = await responseData<{ items: Asset[] }>(assetResponse);
         setAssets(assetData.items);
-        sectionAssets = assetData.items;
       }
 
       if (section === "assets") {
@@ -504,14 +504,6 @@ export default function DashboardPage({ section }: { section: string }) {
         }
       }
 
-      const requestedAssetId = section === "assets" ? new URLSearchParams(window.location.search).get("asset") : null;
-      if (requestedAssetId && sectionAssets) {
-        const requestedAsset = sectionAssets.find((asset) => asset.id === requestedAssetId);
-        if (requestedAsset) {
-          setSelectedQrAsset(requestedAsset);
-          window.history.replaceState({}, "", window.location.pathname);
-        }
-      }
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Falha ao carregar o painel.";
       setError(message);
@@ -525,6 +517,15 @@ export default function DashboardPage({ section }: { section: string }) {
   useEffect(() => {
     void loadData(false);
   }, [loadData]);
+
+  useEffect(() => {
+    if (section !== "assets" || !requestedAssetId || loading) return;
+    const requestedAsset = assets.find((asset) => asset.id === requestedAssetId);
+    if (!requestedAsset) return;
+    setSelectedQrAsset(requestedAsset);
+    setNotificationOpen(false);
+    router.replace("/painel/assets", { scroll: false });
+  }, [assets, loading, requestedAssetId, router, section]);
 
   useEffect(() => {
     if (typeof window === "undefined" || loading || !profile) return;
@@ -611,7 +612,9 @@ export default function DashboardPage({ section }: { section: string }) {
         }
       }
     };
-    const timer = window.setInterval(() => void refreshNotifications(), 30_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshNotifications();
+    }, 5 * 60_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -2149,7 +2152,8 @@ export default function DashboardPage({ section }: { section: string }) {
                   <label>Próxima preventiva<input type="date" value={assetEditForm.nextMaintenance} onChange={(event) => setAssetEditForm({ ...assetEditForm, nextMaintenance: event.target.value })} /></label>
                   {profile?.role === "admin" && <label>Unidade<select value={assetEditForm.unitId} onChange={(event) => setAssetEditForm({ ...assetEditForm, unitId: event.target.value })}><option value="">Sem unidade</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>}
                   {profile?.role === "admin" && <div className="wide-field"><strong>Pessoas autorizadas a usar</strong><span className="form-help">Opcional; permite que outros usuários visualizem este ativo.</span><div className="checkbox-grid">{users.filter((user) => user.uid !== selectedQrAsset.ownerUid).map((user) => <label key={user.uid} className="checkbox-option"><input type="checkbox" checked={assetEditForm.sharedWithUids.includes(user.uid)} onChange={(event) => setAssetEditForm({ ...assetEditForm, sharedWithUids: event.target.checked ? [...assetEditForm.sharedWithUids, user.uid] : assetEditForm.sharedWithUids.filter((uid) => uid !== user.uid) })} />{user.displayName} — {user.email}</label>)}</div></div>}
-                  <div className="form-group-heading"><strong>Aquisição e uso</strong><span>Dados de compra, garantia e medidores.</span></div>                  {profile?.role === "admin" && <><label>Data da compra<input type="date" value={assetEditForm.purchaseDate} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseDate: event.target.value })} /></label>
+                  <div className="form-group-heading"><strong>Aquisição e uso</strong>
+<span>Dados de compra, garantia e medidores.</span></div>                  {profile?.role === "admin" && <><label>Data da compra<input type="date" value={assetEditForm.purchaseDate} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseDate: event.target.value })} /></label>
                   <label>Custo de aquisição (R$)<input type="number" min="0" step="0.01" value={assetEditForm.purchaseCost} onChange={(event) => setAssetEditForm({ ...assetEditForm, purchaseCost: event.target.value })} /></label>
                   <label>Garantia até<input type="date" value={assetEditForm.warrantyUntil} onChange={(event) => setAssetEditForm({ ...assetEditForm, warrantyUntil: event.target.value })} /></label></>}
                   {assetEditForm.category === "Veículo" && <label>Quilometragem atual<input type="number" min="0" step="1" value={assetEditForm.vehicleKm} onChange={(event) => setAssetEditForm({ ...assetEditForm, vehicleKm: event.target.value })} /></label>}

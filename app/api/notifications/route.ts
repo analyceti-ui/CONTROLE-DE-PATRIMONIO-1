@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ApiError, getFirestoreDb, getSessionUser, handleApiError, listRecords, nowIso, readJson, writeAudit } from "@/lib/api";
+import { ApiError, getFirestoreDb, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, readJson, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 const excludedStatuses = new Set(["Baixado", "Descartado", "Descartados"]);
@@ -16,16 +16,18 @@ export async function GET(request: Request) {
       response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
       return response;
     }
-    const [assets, plans, users, preference] = await Promise.all([
+    const [assets, preference] = await Promise.all([
       listRecords("assets", { organization_id: user.organizationId }),
-      listRecords("maintenance_plans"),
-      listRecords("users", { organization_id: user.organizationId }),
       getFirestoreDb().collection("notification_preferences").doc(user.uid).get(),
     ]);
     const visible = assets.filter((asset) => {
       const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
       return (user.role === "admin" || asset.owner_uid === user.uid || sharedWithUids.includes(user.uid)) && !excludedStatuses.has(String(asset.status));
     });
+    const [plans, users] = await Promise.all([
+      listRecordsMatchingAny("maintenance_plans", "asset_id", visible.map((asset) => asset.id)),
+      listRecordsMatchingAny("users", "__name__", [...new Set(visible.map((asset) => String(asset.owner_uid ?? "")).filter(Boolean))]),
+    ]);
     const plansByAsset = new Map(plans.map((plan) => [String(plan.asset_id), plan]));
     const people = new Map(users.map((person) => [person.id, person]));
     const today = new Date();

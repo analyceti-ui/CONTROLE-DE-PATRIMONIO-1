@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, nowIso, readJson, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, readJson, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
 
 const defaultCategories = ["Veículo", "Computador", "Equipamento", "Outro"];
 const defaultStatuses = ["Em uso", "Disponível", "Em manutenção", "Baixado"];
@@ -13,13 +13,20 @@ export async function GET(request: Request) {
     const user = await getSessionUser(request);
     const assets = (await listRecords("assets", { organization_id: user.organizationId }))
       .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
-    const owners = await listRecords("users", { organization_id: user.organizationId });
-    const photos = await listRecords("asset_photos");
-    const ownerMap = new Map(owners.map((owner) => [owner.id, owner]));
-    const items = assets.filter((asset) =>
+    const visibleAssets = assets.filter((asset) =>
       user.role === "admin" || asset.owner_uid === user.uid ||
       (Array.isArray(asset.shared_with_uids) && asset.shared_with_uids.includes(user.uid))
-    ).map((asset) => {
+    );
+    const ownerIds = [...new Set(visibleAssets.flatMap((asset) => [
+      String(asset.owner_uid ?? ""),
+      ...(Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : []),
+    ]).filter(Boolean))];
+    const [owners, photos] = await Promise.all([
+      listRecordsMatchingAny("users", "__name__", ownerIds),
+      listRecordsMatchingAny("asset_photos", "asset_id", visibleAssets.map((asset) => asset.id)),
+    ]);
+    const ownerMap = new Map(owners.map((owner) => [owner.id, owner]));
+    const items = visibleAssets.map((asset) => {
       const owner = ownerMap.get(String(asset.owner_uid));
       const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
       const sharedWithNames = sharedWithUids.map((uid) => {

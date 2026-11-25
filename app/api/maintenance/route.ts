@@ -1,21 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, nowIso, organizationScopedAsset, readJson, requireAdmin, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, organizationScopedAsset, readJson, requireAdmin, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser(request);
-    const [assets, plans, users] = await Promise.all([
-      listRecords("assets", { organization_id: user.organizationId }),
-      listRecords("maintenance_plans"),
-      listRecords("users", { organization_id: user.organizationId }),
-    ]);
+    const assets = await listRecords("assets", { organization_id: user.organizationId });
     const visibleAssets = new Map(assets.filter((asset) => {
       const sharedWithUids = Array.isArray(asset.shared_with_uids) ? asset.shared_with_uids.map(String) : [];
       return user.role === "admin" || asset.owner_uid === user.uid || sharedWithUids.includes(user.uid);
     }).map((asset) => [asset.id, asset]));
+    const [plans, users] = await Promise.all([
+      listRecordsMatchingAny("maintenance_plans", "asset_id", [...visibleAssets.keys()]),
+      listRecordsMatchingAny("users", "__name__", [...new Set([...visibleAssets.values()].map((asset) => String(asset.owner_uid ?? "")).filter(Boolean))]),
+    ]);
     const people = new Map(users.map((person) => [person.id, person]));
     const response = NextResponse.json({
       plans: plans.filter((plan) => visibleAssets.has(String(plan.asset_id)))

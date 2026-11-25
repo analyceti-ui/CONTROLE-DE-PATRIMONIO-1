@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, nowIso, organizationScopedAsset, readJson, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
+import { ApiError, getRecord, getSessionUser, handleApiError, listRecords, listRecordsMatchingAny, nowIso, organizationScopedAsset, readJson, setRecord, writeAssetHistory, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 const priorities = new Set(["Baixa", "Normal", "Alta", "Urgente"]);
@@ -9,12 +9,13 @@ const kinds = new Set(["Preventiva", "Corretiva", "Inspeção"]);
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser(request);
-    const [assets, orders, users] = await Promise.all([
-      listRecords("assets", { organization_id: user.organizationId }),
-      listRecords("service_orders"),
-      listRecords("users", { organization_id: user.organizationId }),
-    ]);
+    const assets = await listRecords("assets", { organization_id: user.organizationId });
     const visible = new Map(assets.filter((asset) => user.role === "admin" || asset.owner_uid === user.uid).map((asset) => [asset.id, asset]));
+    const orders = await listRecordsMatchingAny("service_orders", "asset_id", [...visible.keys()]);
+    const users = await listRecordsMatchingAny("users", "__name__", [...new Set(orders.flatMap((order) => [
+      String(order.opened_by ?? ""),
+      String(order.assigned_to ?? ""),
+    ]).filter(Boolean))]);
     const people = new Map(users.map((person) => [person.id, person]));
     const result = orders.filter((order) => visible.has(String(order.asset_id)))
       .sort((a, b) => {
