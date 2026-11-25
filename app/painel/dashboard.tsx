@@ -310,6 +310,9 @@ export default function DashboardPage({ section }: { section: string }) {
   const [loadingAssetDetails, setLoadingAssetDetails] = useState(false);
   const [equipmentPhotoFiles, setEquipmentPhotoFiles] = useState<File[]>([]);
   const [equipmentPhotoCaption, setEquipmentPhotoCaption] = useState("");
+  const selectedQrAssetId = selectedQrAsset?.id;
+  const selectedQrAssetCategory = selectedQrAsset?.category;
+  const selectedQrAssetVehicleKm = selectedQrAsset?.vehicleKm;
   const [newAssetPhotoFiles, setNewAssetPhotoFiles] = useState<File[]>([]);
   const [newAssetPhotoCaption, setNewAssetPhotoCaption] = useState("");
   const [newAssetOpen, setNewAssetOpen] = useState(false);
@@ -798,7 +801,7 @@ export default function DashboardPage({ section }: { section: string }) {
   }, [assets, scanning]);
 
   useEffect(() => {
-    if (!selectedQrAsset) {
+    if (!selectedQrAssetId) {
       setAssetPhotos([]);
       setAssetTransfers([]);
       setFuelRecords([]);
@@ -812,15 +815,15 @@ export default function DashboardPage({ section }: { section: string }) {
     setLoadingAssetDetails(true);
     setEquipmentPhotoFiles([]);
     setEquipmentPhotoCaption("");
-    if (selectedQrAsset.category === "Veículo") {
+    if (selectedQrAssetCategory === "Veículo") {
       setFuelForm({
-        odometerKm: String(selectedQrAsset.vehicleKm ?? ""),
+        odometerKm: String(selectedQrAssetVehicleKm ?? ""),
         amount: "",
         odometerPhoto: null,
         receiptPhoto: null,
       });
     }
-    const detailRequest = api(`/api/assets/${selectedQrAsset.id}`)
+    const detailRequest = api(`/api/assets/${selectedQrAssetId}`)
       .then((response) => responseData<{
         asset: {
           shared_with_uids?: string[];
@@ -833,7 +836,7 @@ export default function DashboardPage({ section }: { section: string }) {
         if (!active) return;
         const sharedWithUids = Array.isArray(data.asset.shared_with_uids) ? data.asset.shared_with_uids.map(String) : [];
         const sharedWithNames = Array.isArray(data.asset.shared_with_names) ? data.asset.shared_with_names.map(String) : [];
-        setSelectedQrAsset((current) => current ? {
+        setSelectedQrAsset((current) => current?.id === selectedQrAssetId ? {
           ...current,
           sharedWithUids,
           sharedWithNames,
@@ -841,8 +844,8 @@ export default function DashboardPage({ section }: { section: string }) {
         setAssetPhotos(data.photos);
         setAssetTransfers(data.transfers);
       });
-    const fuelRequest = selectedQrAsset.category === "Veículo"
-      ? api(`/api/assets/${selectedQrAsset.id}/fuel`)
+    const fuelRequest = selectedQrAssetCategory === "Veículo"
+      ? api(`/api/assets/${selectedQrAssetId}/fuel`)
         .then((response) => responseData<{
           records: VehicleFuelRecord[];
           maintenanceHistory: VehicleMaintenanceRecord[];
@@ -868,7 +871,7 @@ export default function DashboardPage({ section }: { section: string }) {
     return () => {
       active = false;
     };
-  }, [api, selectedQrAsset]);
+  }, [api, selectedQrAssetCategory, selectedQrAssetId, selectedQrAssetVehicleKm]);
 
   const filteredAssets = useMemo(() => {
     const normalized = query.trim().toLowerCase();
