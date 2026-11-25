@@ -374,70 +374,11 @@ export default function DashboardPage({ section }: { section: string }) {
     });
   }, []);
 
-  const DASHBOARD_CACHE_KEY = "patrimonio-dashboard-cache-v1";
-  const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
-
-  const loadData = useCallback(async (forceRefresh = true) => {
+  const loadData = useCallback(async () => {
     if (loadDataRunningRef.current) return;
     loadDataRunningRef.current = true;
     setError("");
     try {
-      if (typeof window !== "undefined") {
-        const cachedText = window.sessionStorage.getItem(DASHBOARD_CACHE_KEY);
-        if (cachedText) {
-          try {
-            const cached = JSON.parse(cachedText) as {
-              savedAt: number;
-              profile: Profile | null;
-              assets: Asset[];
-              users: User[];
-              orders: ServiceOrder[];
-              inventory: InventoryItem[];
-              purchaseRequests: PurchaseRequest[];
-              inspections: Inspection[];
-              reportTotals: typeof reportTotals;
-              inAppNotifications: boolean;
-              emailNotifications: boolean;
-              notificationAlerts: NotificationAlert[];
-              units: Unit[];
-              maintenancePlans: MaintenancePlan[];
-              auditEntries: AuditEntry[];
-              organization: { id: string; name: string } | null;
-              assetCategories: string[];
-              assetStatuses: string[];
-            };
-            const cacheIsFresh = Date.now() - cached.savedAt < DASHBOARD_CACHE_TTL_MS;
-            if (cached.profile) {
-              setProfile(cached.profile);
-              setAssets(cached.assets);
-              setUsers(cached.users);
-              setOrders(cached.orders);
-              setInventory(cached.inventory);
-              setPurchaseRequests(cached.purchaseRequests);
-              setInspections(cached.inspections);
-              setReportTotals(cached.reportTotals);
-              setInAppNotifications(cached.inAppNotifications);
-              setEmailNotifications(cached.emailNotifications);
-              setNotificationAlerts(cached.notificationAlerts);
-              notificationKeysRef.current = new Set(cached.notificationAlerts.map(getNotificationKey));
-              setUnits(cached.units);
-              setMaintenancePlans(cached.maintenancePlans);
-              setAuditEntries(cached.auditEntries);
-              setOrganization(cached.organization);
-              setAssetCategories(cached.assetCategories);
-              setAssetStatuses(cached.assetStatuses);
-              setLoading(false);
-              if (!forceRefresh && cacheIsFresh) {
-                loadDataRunningRef.current = false;
-                return;
-              }
-            }
-          } catch {
-            window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
-          }
-        }
-      }
-
       const profileData = await responseData<Profile>(await api("/api/auth/profile"));
       setProfile(profileData);
       if (profileData.mustChangePassword) {
@@ -521,10 +462,10 @@ export default function DashboardPage({ section }: { section: string }) {
       loadDataRunningRef.current = false;
       setLoading(false);
     }
-  }, [api, router, section, DASHBOARD_CACHE_KEY, DASHBOARD_CACHE_TTL_MS]);
+  }, [api, router, section]);
 
   useEffect(() => {
-    void loadData(false);
+    void loadData();
   }, [loadData]);
 
   useEffect(() => {
@@ -535,30 +476,6 @@ export default function DashboardPage({ section }: { section: string }) {
     setNotificationOpen(false);
     router.replace("/painel/assets", { scroll: false });
   }, [assets, loading, requestedAssetId, router, section]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || loading || !profile) return;
-    window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
-      savedAt: Date.now(),
-      profile,
-      assets,
-      users,
-      orders,
-      inventory,
-      purchaseRequests,
-      inspections,
-      reportTotals,
-      inAppNotifications,
-      emailNotifications,
-      notificationAlerts,
-      units,
-      maintenancePlans,
-      auditEntries,
-      organization,
-      assetCategories,
-      assetStatuses,
-    }));
-  }, [loading, profile, assets, users, orders, inventory, purchaseRequests, inspections, reportTotals, inAppNotifications, emailNotifications, notificationAlerts, units, maintenancePlans, auditEntries, organization, assetCategories, assetStatuses]);
 
   const profileUid = profile?.uid;
   useEffect(() => {
@@ -1422,7 +1339,6 @@ export default function DashboardPage({ section }: { section: string }) {
         body: JSON.stringify(passwordForm),
       }));
       setPasswordForm({ currentPassword: "", newPassword: "" });
-      window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
       setProfile((current) => current ? { ...current, mustChangePassword: false } : current);
       setNotice("Senha alterada com sucesso.");
       await loadData();
@@ -1523,6 +1439,7 @@ export default function DashboardPage({ section }: { section: string }) {
   }
 
   async function logout() {
+    window.sessionStorage.removeItem("patrimonio-dashboard-cache-v1");
     await api("/api/auth", { method: "DELETE" });
     router.replace("/");
   }
@@ -2105,7 +2022,7 @@ export default function DashboardPage({ section }: { section: string }) {
                 </div>
               </div>
               {recordFormOpen.users && <form id="users-create-form" className="asset-form entry-form user-create-form" onSubmit={addUser}>
-                <div className="form-group-heading"><strong>Dados de acesso</strong><span>Crie uma conta e escolha se será usuário ou administrador.</span></div>
+                <div className="form-group-heading"><strong>Dados de acesso</strong><span>Crie uma conta de usuário para acessar o sistema.</span></div>
                 <label>Nome<input required maxLength={100} value={newUser.name} onChange={(event) => setNewUser({ ...newUser, name: event.target.value })} placeholder="Nome da pessoa" /></label>
                 <label>E-mail<input required type="email" maxLength={254} value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} placeholder="pessoa@empresa.com.br" /></label>
                 <label>Senha inicial<input required type="password" minLength={8} maxLength={128} autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} placeholder="Mínimo de 8 caracteres" /></label>

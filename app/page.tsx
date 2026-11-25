@@ -28,6 +28,7 @@ export default function HomePage() {
         const data = (await response.json()) as { error?: string };
         throw new Error(data.error ?? "Não foi possível carregar seu perfil.");
       }
+      window.sessionStorage.removeItem("patrimonio-dashboard-cache-v1");
       router.push("/painel");
     } catch (submitError) {
       setError(messageFor(submitError));
