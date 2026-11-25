@@ -97,6 +97,56 @@ type AuditEntry = {
   entity_id: string;
   details_json: string;
 };
+type FleetAuditAsset = {
+  id: string;
+  name: string;
+  category: string;
+  tag: string;
+  location: string;
+  status: string;
+  ownerUid: string;
+  ownerName: string;
+  ownerEmail: string;
+  sharedWith: { uid: string; name: string }[];
+  unitName: string;
+  vehicleKm: number | null;
+};
+type FleetAuditFuelRecord = {
+  id: string;
+  assetId: string;
+  assetName: string;
+  assetTag: string;
+  location: string;
+  ownerUid: string;
+  ownerName: string;
+  sharedWithUids: string[];
+  recordedByUid: string;
+  recordedByName: string;
+  odometerKm: number;
+  previousOdometerKm: number;
+  distanceKm: number;
+  amount: number;
+  fuelType: string;
+  createdAt: string;
+};
+type FleetAuditServiceOrder = {
+  id: string;
+  assetId: string;
+  assetName: string;
+  assetTag: string;
+  location: string;
+  ownerUid: string;
+  ownerName: string;
+  sharedWithUids: string[];
+  description: string;
+  kind: string;
+  status: string;
+  laborCost: number;
+  partsCost: number;
+  createdAt: string;
+  completedAt: string;
+};
+type FleetAuditFilters = { startDate: string; endDate: string; assetId: string; ownerUid: string; fuelType: string };
 type NotificationAlert = {
   assetId: string;
   assetName: string;
@@ -246,6 +296,28 @@ function auditDetailsLabel(rawDetails: string) {
   }
 }
 
+function exportCsv(filename: string, headers: string[], rows: unknown[][]) {
+  const cell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const contents = `\uFEFF${[headers, ...rows].map((row) => row.map(cell).join(";")).join("\r\n")}`;
+  const url = URL.createObjectURL(new Blob([contents], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Data não informada"
+    : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date);
+}
+
 export default function DashboardPage({ section }: { section: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -279,6 +351,17 @@ export default function DashboardPage({ section }: { section: string }) {
   const [overviewTotals, setOverviewTotals] = useState({ count: 0, inUse: 0 });
   const [reportTotals, setReportTotals] = useState({ count: 0, purchaseCost: 0, inUse: 0, inMaintenance: 0, withoutOwner: 0 });
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [fleetAuditAssets, setFleetAuditAssets] = useState<FleetAuditAsset[]>([]);
+  const [fleetAuditFuelRecords, setFleetAuditFuelRecords] = useState<FleetAuditFuelRecord[]>([]);
+  const [fleetAuditServiceOrders, setFleetAuditServiceOrders] = useState<FleetAuditServiceOrder[]>([]);
+  const [auditTab, setAuditTab] = useState<"activity" | "fleet">("activity");
+  const [fleetAuditFilters, setFleetAuditFilters] = useState<FleetAuditFilters>({
+    startDate: "",
+    endDate: "",
+    assetId: "all",
+    ownerUid: "all",
+    fuelType: "all",
+  });
   const [inAppNotifications, setInAppNotifications] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -472,7 +555,17 @@ export default function DashboardPage({ section }: { section: string }) {
           setUsers((await responseData<{ users: User[] }>(await api("/api/users"))).users);
         }
         if (section === "audit") {
-          setAuditEntries((await responseData<{ entries: AuditEntry[] }>(await api("/api/audit"))).entries);
+          const [auditResponse, fleetResponse] = await Promise.all([api("/api/audit"), api("/api/audit/fleet")]);
+          const auditData = await responseData<{ entries: AuditEntry[] }>(auditResponse);
+          const fleetData = await responseData<{
+            assets: FleetAuditAsset[];
+            fuelRecords: FleetAuditFuelRecord[];
+            serviceOrders: FleetAuditServiceOrder[];
+          }>(fleetResponse);
+          setAuditEntries(auditData.entries);
+          setFleetAuditAssets(fleetData.assets);
+          setFleetAuditFuelRecords(fleetData.fuelRecords);
+          setFleetAuditServiceOrders(fleetData.serviceOrders);
         }
         if (section === "settings") {
           const [optionsResponse, unitsResponse, organizationResponse] = await Promise.all([api("/api/asset-options"), api("/api/units"), api("/api/organizations")]);
@@ -894,6 +987,64 @@ export default function DashboardPage({ section }: { section: string }) {
     return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
   }).length;
   const auditActionTypes = [...new Set(auditEntries.map((entry) => entry.action))];
+  const fleetAuditUsers = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const asset of fleetAuditAssets) {
+      if (asset.ownerUid) names.set(asset.ownerUid, asset.ownerName || asset.ownerEmail || "Usuário");
+      for (const sharedUser of asset.sharedWith) {
+        if (sharedUser.uid) names.set(sharedUser.uid, sharedUser.name || "Usuário compartilhado");
+      }
+    }
+    return [...names.entries()].map(([uid, name]) => ({ uid, name })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  }, [fleetAuditAssets]);
+  const filteredFleetAuditAssets = useMemo(
+    () => fleetAuditAssets.filter((asset) =>
+      (fleetAuditFilters.assetId === "all" || asset.id === fleetAuditFilters.assetId) &&
+      (fleetAuditFilters.ownerUid === "all" || asset.ownerUid === fleetAuditFilters.ownerUid ||
+        asset.sharedWith.some((sharedUser) => sharedUser.uid === fleetAuditFilters.ownerUid)),
+    ),
+    [fleetAuditAssets, fleetAuditFilters.assetId, fleetAuditFilters.ownerUid],
+  );
+  const filteredFleetFuelRecords = useMemo(() => fleetAuditFuelRecords.filter((record) => {
+    const recordDate = record.createdAt.slice(0, 10);
+    const assignedToUser = record.ownerUid === fleetAuditFilters.ownerUid ||
+      record.sharedWithUids.includes(fleetAuditFilters.ownerUid);
+    return (!fleetAuditFilters.startDate || recordDate >= fleetAuditFilters.startDate) &&
+      (!fleetAuditFilters.endDate || recordDate <= fleetAuditFilters.endDate) &&
+      (fleetAuditFilters.assetId === "all" || record.assetId === fleetAuditFilters.assetId) &&
+      (fleetAuditFilters.ownerUid === "all" || assignedToUser) &&
+      (fleetAuditFilters.fuelType === "all" || record.fuelType === fleetAuditFilters.fuelType);
+  }), [fleetAuditFilters, fleetAuditFuelRecords]);
+  const filteredFleetServiceOrders = useMemo(() => fleetAuditServiceOrders.filter((order) => {
+    if (order.status !== "Concluída") return false;
+    const orderDate = (order.completedAt || order.createdAt).slice(0, 10);
+    const assignedToUser = order.ownerUid === fleetAuditFilters.ownerUid ||
+      order.sharedWithUids.includes(fleetAuditFilters.ownerUid);
+    return (!fleetAuditFilters.startDate || orderDate >= fleetAuditFilters.startDate) &&
+      (!fleetAuditFilters.endDate || orderDate <= fleetAuditFilters.endDate) &&
+      (fleetAuditFilters.assetId === "all" || order.assetId === fleetAuditFilters.assetId) &&
+      (fleetAuditFilters.ownerUid === "all" || assignedToUser);
+  }), [fleetAuditFilters, fleetAuditServiceOrders]);
+  const fleetFuelTotal = filteredFleetFuelRecords.reduce((sum, record) => sum + record.amount, 0);
+  const fleetMaintenanceTotal = filteredFleetServiceOrders.reduce((sum, order) => sum + order.laborCost + order.partsCost, 0);
+  const fleetFuelByType = useMemo(() => {
+    const totals = new Map<string, { amount: number; count: number }>();
+    for (const record of filteredFleetFuelRecords) {
+      const current = totals.get(record.fuelType) ?? { amount: 0, count: 0 };
+      totals.set(record.fuelType, { amount: current.amount + record.amount, count: current.count + 1 });
+    }
+    return [...totals.entries()].map(([fuelType, values]) => ({ fuelType, ...values })).sort((a, b) => b.amount - a.amount);
+  }, [filteredFleetFuelRecords]);
+  const fleetFuelByAsset = useMemo(() => {
+    const totals = new Map<string, { name: string; tag: string; location: string; ownerName: string; amount: number; count: number }>();
+    for (const record of filteredFleetFuelRecords) {
+      const current = totals.get(record.assetId) ?? {
+        name: record.assetName, tag: record.assetTag, location: record.location, ownerName: record.ownerName, amount: 0, count: 0,
+      };
+      totals.set(record.assetId, { ...current, amount: current.amount + record.amount, count: current.count + 1 });
+    }
+    return [...totals.entries()].map(([assetId, values]) => ({ assetId, ...values })).sort((a, b) => b.amount - a.amount);
+  }, [filteredFleetFuelRecords]);
   const sectionTitles: Record<string, string> = {
     overview: "Visão geral",
     assets: "Equipamentos",
@@ -2454,40 +2605,86 @@ export default function DashboardPage({ section }: { section: string }) {
           {profile?.role === "admin" && section === "audit" && (
             <section className="panel" id="auditoria">
               <div className="panel-heading audit-heading">
-                <div><span className="eyebrow">SEGURANÇA E RASTREABILIDADE</span><h2>Auditoria do sistema</h2><p>Acompanhe alterações administrativas, responsáveis e registros afetados.</p></div>
+                <div><span className="eyebrow">GESTÃO, CUSTOS E RASTREABILIDADE</span><h2>Auditoria e frota</h2><p>Consulte atividades, custos operacionais, abastecimentos e responsabilidade por ativo.</p></div>
+              </div>
+              <div className="audit-tab-bar" role="tablist" aria-label="Seções da auditoria">
+                <button type="button" role="tab" aria-selected={auditTab === "activity"} className={auditTab === "activity" ? "active" : ""} onClick={() => setAuditTab("activity")}>Atividades do sistema</button>
+                <button type="button" role="tab" aria-selected={auditTab === "fleet"} className={auditTab === "fleet" ? "active" : ""} onClick={() => setAuditTab("fleet")}>Frota, custos e combustível</button>
+              </div>
+              {auditTab === "activity" ? <>
                 <div className="record-tools audit-tools">
                   <label className="search-box"><span>⌕</span><input value={recordQueries.audit} onChange={(event) => setRecordQueries((previous) => ({ ...previous, audit: event.target.value }))} placeholder="Buscar atividade, usuário ou registro..." aria-label="Buscar auditoria" /></label>
                   <select className="audit-filter" aria-label="Filtrar por tipo de atividade" value={auditActionFilter} onChange={(event) => setAuditActionFilter(event.target.value)}><option value="all">Todas as atividades</option>{auditActionTypes.map((action) => <option key={action} value={action}>{auditActionLabel(action)}</option>)}</select>
                   <RecordViewToggle value={recordViews.audit} onChange={(view) => changeRecordView("audit", view)} label="auditoria" />
                 </div>
-              </div>
-              <div className="audit-summary-grid">
-                <article className="audit-summary-card"><span className="audit-summary-icon">◷</span><div><span>REGISTROS CARREGADOS</span><strong>{auditEntries.length}</strong><small>Atividades recentes da organização</small></div></article>
-                <article className="audit-summary-card"><span className="audit-summary-icon">♙</span><div><span>USUÁRIOS ENVOLVIDOS</span><strong>{auditActorCount}</strong><small>Responsáveis nas atividades recentes</small></div></article>
-                <article className="audit-summary-card"><span className="audit-summary-icon">◉</span><div><span>ATIVIDADES HOJE</span><strong>{auditTodayCount}</strong><small>Registradas desde meia-noite</small></div></article>
-                <article className="audit-summary-card"><span className="audit-summary-icon">⌕</span><div><span>RESULTADOS NA BUSCA</span><strong>{filteredAuditEntries.length}</strong><small>Correspondências dos filtros atuais</small></div></article>
-              </div>
-              {filteredAuditEntries.length ? recordViews.audit === "list" ? <div className="table-scroll audit-table-scroll">
-                <table className="audit-table"><thead><tr><th>DATA E HORA</th><th>RESPONSÁVEL</th><th>ATIVIDADE</th><th>REGISTRO AFETADO</th><th>DETALHES</th></tr></thead>
-                  <tbody>{filteredAuditEntries.map((entry) => (
-                    <tr key={entry.id}>
-                      <td><time>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.created_at))}</time></td>
-                      <td><div className="audit-actor"><span className="avatar small">{(entry.actorName || entry.actorEmail || "S").slice(0, 1).toUpperCase()}</span><span><strong>{entry.actorName || "Sistema"}</strong><small>{entry.actorEmail || "Ação automática"}</small></span></div></td>
-                      <td><span className="audit-action-label">{auditActionLabel(entry.action)}</span><small className="audit-technical-name">{entry.action}</small></td>
-                      <td><strong>{auditEntityLabel(entry.entity_type)}</strong><small className="audit-technical-name">{entry.entity_id}</small></td>
-                      <td className="audit-details-cell">{auditDetailsLabel(entry.details_json)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div> : <div className="audit-card-list">{filteredAuditEntries.map((entry) => <article className="audit-entry-card" key={entry.id}>
-                <div className="audit-entry-rail"><span aria-hidden="true">•</span></div>
-                <div className="audit-entry-content">
-                  <div className="audit-entry-topline"><span className="audit-entry-action">{auditActionLabel(entry.action)}</span><time>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.created_at))}</time></div>
-                  <p><strong>{entry.actorName || "Sistema"}</strong> {entry.actorEmail && <span>({entry.actorEmail})</span>} <span>· {auditEntityLabel(entry.entity_type)} · {entry.entity_id}</span></p>
-                  <small>{auditDetailsLabel(entry.details_json)}</small>
+                <div className="audit-summary-grid">
+                  <article className="audit-summary-card"><span className="audit-summary-icon">◷</span><div><span>REGISTROS CARREGADOS</span><strong>{auditEntries.length}</strong><small>Atividades recentes da organização</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">♙</span><div><span>USUÁRIOS ENVOLVIDOS</span><strong>{auditActorCount}</strong><small>Responsáveis nas atividades recentes</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">◉</span><div><span>ATIVIDADES HOJE</span><strong>{auditTodayCount}</strong><small>Registradas desde meia-noite</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">⌕</span><div><span>RESULTADOS NA BUSCA</span><strong>{filteredAuditEntries.length}</strong><small>Correspondências dos filtros atuais</small></div></article>
                 </div>
-              </article>)}</div> : <div className="audit-empty-state"><span>⌕</span><strong>{auditEntries.length ? "Nenhuma atividade encontrada" : "Ainda não há atividades registradas"}</strong><p>{auditEntries.length ? "Tente mudar os filtros ou usar outros termos na busca." : "As alterações de equipamentos, usuários, estoque e solicitações aparecerão aqui."}</p></div>}
-              <div className="audit-footer"><span>Exibindo até 500 atividades mais recentes da organização.</span><span>Os registros são gerados automaticamente pelo sistema.</span></div>
+                {filteredAuditEntries.length ? recordViews.audit === "list" ? <div className="table-scroll audit-table-scroll">
+                  <table className="audit-table"><thead><tr><th>DATA E HORA</th><th>RESPONSÁVEL</th><th>ATIVIDADE</th><th>REGISTRO AFETADO</th><th>DETALHES</th></tr></thead>
+                    <tbody>{filteredAuditEntries.map((entry) => (
+                      <tr key={entry.id}>
+                        <td><time>{formatDateTime(entry.created_at)}</time></td>
+                        <td><div className="audit-actor"><span className="avatar small">{(entry.actorName || entry.actorEmail || "S").slice(0, 1).toUpperCase()}</span><span><strong>{entry.actorName || "Sistema"}</strong><small>{entry.actorEmail || "Ação automática"}</small></span></div></td>
+                        <td><span className="audit-action-label">{auditActionLabel(entry.action)}</span><small className="audit-technical-name">{entry.action}</small></td>
+                        <td><strong>{auditEntityLabel(entry.entity_type)}</strong><small className="audit-technical-name">{entry.entity_id}</small></td>
+                        <td className="audit-details-cell">{auditDetailsLabel(entry.details_json)}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div> : <div className="audit-card-list">{filteredAuditEntries.map((entry) => <article className="audit-entry-card" key={entry.id}>
+                  <div className="audit-entry-rail"><span aria-hidden="true">•</span></div>
+                  <div className="audit-entry-content">
+                    <div className="audit-entry-topline"><span className="audit-entry-action">{auditActionLabel(entry.action)}</span><time>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.created_at))}</time></div>
+                    <p><strong>{entry.actorName || "Sistema"}</strong> {entry.actorEmail && <span>({entry.actorEmail})</span>} <span>· {auditEntityLabel(entry.entity_type)} · {entry.entity_id}</span></p>
+                    <small>{auditDetailsLabel(entry.details_json)}</small>
+                  </div>
+                </article>)}</div> : <div className="audit-empty-state"><span>⌕</span><strong>{auditEntries.length ? "Nenhuma atividade encontrada" : "Ainda não há atividades registradas"}</strong><p>{auditEntries.length ? "Tente mudar os filtros ou usar outros termos na busca." : "As alterações de equipamentos, usuários, estoque e solicitações aparecerão aqui."}</p></div>}
+                <div className="audit-footer"><span>Exibindo até 500 atividades mais recentes da organização.</span><span>Os registros são gerados automaticamente pelo sistema.</span></div>
+              </> : <div className="fleet-audit-content">
+                <div className="fleet-audit-intro"><div><strong>Visão gerencial da frota</strong><p>Filtre gastos por período, veículo, responsável e combustível. Responsáveis compartilhados também são considerados.</p></div><div className="fleet-export-actions">
+                  <button type="button" className="button button-secondary compact-button" onClick={() => exportCsv("gastos-combustivel.csv", ["Data", "Veículo", "Patrimônio", "Localização", "Responsável atual", "Registrado por", "Combustível", "Hodômetro (km)", "Distância desde abastecimento anterior (km)", "Valor pago (R$)"], filteredFleetFuelRecords.map((record) => [formatDateTime(record.createdAt), record.assetName, record.assetTag, record.location, record.ownerName, record.recordedByName, record.fuelType, record.odometerKm, record.distanceKm, record.amount]))}>Exportar abastecimentos</button>
+                  <button type="button" className="button button-secondary compact-button" onClick={() => exportCsv("ativos-e-responsaveis.csv", ["Ativo", "Categoria", "Patrimônio", "Localização", "Unidade", "Situação", "Responsável principal", "E-mail", "Compartilhado com", "Hodômetro (km)"], filteredFleetAuditAssets.map((asset) => [asset.name, asset.category, asset.tag, asset.location, asset.unitName, asset.status, asset.ownerName, asset.ownerEmail, asset.sharedWith.map((person) => person.name).filter(Boolean).join(", "), asset.vehicleKm]))}>Exportar ativos</button>
+                  <button type="button" className="button button-secondary compact-button" onClick={() => exportCsv("custos-manutencao.csv", ["Data de conclusão", "Ativo", "Localização", "Responsável", "Tipo", "Serviço", "Mão de obra (R$)", "Peças (R$)", "Total (R$)"], filteredFleetServiceOrders.map((order) => [formatDateTime(order.completedAt || order.createdAt), order.assetName, order.location, order.ownerName, order.kind, order.description, order.laborCost, order.partsCost, order.laborCost + order.partsCost]))}>Exportar manutenções</button>
+                </div></div>
+                <div className="fleet-audit-filters">
+                  <label>De<input type="date" value={fleetAuditFilters.startDate} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, startDate: event.target.value }))} /></label>
+                  <label>Até<input type="date" value={fleetAuditFilters.endDate} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, endDate: event.target.value }))} /></label>
+                  <label>Ativo<select value={fleetAuditFilters.assetId} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, assetId: event.target.value }))}><option value="all">Todos os ativos</option>{fleetAuditAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{asset.tag ? ` · ${asset.tag}` : ""}</option>)}</select></label>
+                  <label>Responsável<select value={fleetAuditFilters.ownerUid} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, ownerUid: event.target.value }))}><option value="all">Todos os responsáveis</option>{fleetAuditUsers.map((person) => <option key={person.uid} value={person.uid}>{person.name}</option>)}</select></label>
+                  <label>Combustível<select value={fleetAuditFilters.fuelType} onChange={(event) => setFleetAuditFilters((current) => ({ ...current, fuelType: event.target.value }))}><option value="all">Todos os combustíveis</option>{[...new Set(fleetAuditFuelRecords.map((record) => record.fuelType))].sort().map((fuelType) => <option key={fuelType} value={fuelType}>{fuelType}</option>)}</select></label>
+                  <button type="button" className="button button-secondary compact-button" onClick={() => setFleetAuditFilters({ startDate: "", endDate: "", assetId: "all", ownerUid: "all", fuelType: "all" })}>Limpar filtros</button>
+                </div>
+                {fleetAuditFilters.startDate && fleetAuditFilters.endDate && fleetAuditFilters.startDate > fleetAuditFilters.endDate && <p className="notice error-notice">A data inicial não pode ser posterior à data final.</p>}
+                <div className="audit-summary-grid fleet-audit-summary">
+                  <article className="audit-summary-card"><span className="audit-summary-icon">R$</span><div><span>COMBUSTÍVEL NO PERÍODO</span><strong>{formatCurrency(fleetFuelTotal)}</strong><small>{filteredFleetFuelRecords.length} abastecimento(s) filtrado(s)</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">⚒</span><div><span>MANUTENÇÃO CONCLUÍDA</span><strong>{formatCurrency(fleetMaintenanceTotal)}</strong><small>{filteredFleetServiceOrders.length} ordem(ns) concluída(s)</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">◫</span><div><span>ATIVOS ATRIBUÍDOS</span><strong>{filteredFleetAuditAssets.length}</strong><small>Com responsável ou compartilhamento correspondente</small></div></article>
+                  <article className="audit-summary-card"><span className="audit-summary-icon">♙</span><div><span>VEÍCULOS COM ABASTECIMENTO</span><strong>{fleetFuelByAsset.length}</strong><small>Veículos com registros nos filtros atuais</small></div></article>
+                </div>
+                <p className="fleet-audit-note">Os valores de combustível são os valores pagos informados no abastecimento. O sistema ainda não registra litros; por isso, não calcula preço por litro nem consumo médio. Os gastos de manutenção consideram apenas ordens concluídas.</p>
+                <div className="fleet-audit-breakdowns">
+                  <section className="fleet-audit-card"><div className="fleet-audit-card-heading"><div><span className="eyebrow">COMPOSIÇÃO DOS ABASTECIMENTOS</span><h3>Gastos por combustível</h3></div></div>
+                    {fleetFuelByType.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>COMBUSTÍVEL</th><th>ABASTECIMENTOS</th><th>TOTAL PAGO</th><th>PARTICIPAÇÃO</th></tr></thead><tbody>{fleetFuelByType.map((item) => <tr key={item.fuelType}><td>{item.fuelType}</td><td>{item.count}</td><td>{formatCurrency(item.amount)}</td><td><div className="fleet-spend-bar"><span style={{ width: `${fleetFuelTotal ? Math.max(2, item.amount / fleetFuelTotal * 100) : 0}%` }} /></div></td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há abastecimentos para os filtros selecionados.</p>}
+                  </section>
+                  <section className="fleet-audit-card"><div className="fleet-audit-card-heading"><div><span className="eyebrow">COMPARATIVO DA FROTA</span><h3>Gastos por veículo</h3></div></div>
+                    {fleetFuelByAsset.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>VEÍCULO</th><th>LOCALIZAÇÃO</th><th>RESPONSÁVEL</th><th>REGISTROS</th><th>TOTAL PAGO</th></tr></thead><tbody>{fleetFuelByAsset.map((item) => <tr key={item.assetId}><td><strong>{item.name}</strong>{item.tag && <small>{item.tag}</small>}</td><td>{item.location || "Não informada"}</td><td>{item.ownerName || "Sem responsável"}</td><td>{item.count}</td><td>{formatCurrency(item.amount)}</td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há abastecimentos para os filtros selecionados.</p>}
+                  </section>
+                </div>
+                <section className="fleet-audit-card fleet-audit-full-width"><div className="fleet-audit-card-heading"><div><span className="eyebrow">RESPONSABILIDADE E LOCALIZAÇÃO</span><h3>Onde estão os ativos e quem está com eles</h3></div><span>{filteredFleetAuditAssets.length} ativo(s)</span></div>
+                  {filteredFleetAuditAssets.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>ATIVO</th><th>LOCALIZAÇÃO</th><th>UNIDADE</th><th>SITUAÇÃO</th><th>RESPONSÁVEL PRINCIPAL</th><th>COMPARTILHADO COM</th><th>HODÔMETRO</th></tr></thead><tbody>{filteredFleetAuditAssets.map((asset) => <tr key={asset.id}><td><strong>{asset.name}</strong><small>{asset.category}{asset.tag ? ` · ${asset.tag}` : ""}</small></td><td>{asset.location || "Não informada"}</td><td>{asset.unitName || "—"}</td><td>{asset.status || "—"}</td><td>{asset.ownerName || "Sem responsável"}{asset.ownerEmail && <small>{asset.ownerEmail}</small>}</td><td>{asset.sharedWith.map((person) => person.name).filter(Boolean).join(", ") || "—"}</td><td>{asset.vehicleKm === null ? "—" : `${asset.vehicleKm.toLocaleString("pt-BR")} km`}</td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Nenhum ativo corresponde ao responsável selecionado.</p>}
+                </section>
+                <section className="fleet-audit-card fleet-audit-full-width"><div className="fleet-audit-card-heading"><div><span className="eyebrow">HISTÓRICO FINANCEIRO</span><h3>Abastecimentos detalhados</h3></div><span>{filteredFleetFuelRecords.length} registro(s)</span></div>
+                  {filteredFleetFuelRecords.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>DATA</th><th>VEÍCULO / LOCAL</th><th>RESPONSÁVEL</th><th>REGISTRADO POR</th><th>COMBUSTÍVEL</th><th>HODÔMETRO / DISTÂNCIA</th><th>VALOR PAGO</th></tr></thead><tbody>{filteredFleetFuelRecords.map((record) => <tr key={record.id}><td>{formatDateTime(record.createdAt)}</td><td><strong>{record.assetName}</strong><small>{record.location || "Localização não informada"}{record.assetTag ? ` · ${record.assetTag}` : ""}</small></td><td>{record.ownerName || "Sem responsável"}</td><td>{record.recordedByName || "Usuário indisponível"}</td><td>{record.fuelType}</td><td>{record.odometerKm.toLocaleString("pt-BR")} km<small>{record.distanceKm.toLocaleString("pt-BR")} km desde o anterior</small></td><td><strong>{formatCurrency(record.amount)}</strong></td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há abastecimentos para os filtros selecionados.</p>}
+                </section>
+                <section className="fleet-audit-card fleet-audit-full-width"><div className="fleet-audit-card-heading"><div><span className="eyebrow">CUSTOS DE OFICINA</span><h3>Ordens de serviço concluídas</h3></div><span>{filteredFleetServiceOrders.length} ordem(ns)</span></div>
+                  {filteredFleetServiceOrders.length ? <div className="table-scroll"><table className="fleet-audit-table"><thead><tr><th>CONCLUSÃO</th><th>VEÍCULO / LOCAL</th><th>TIPO E SERVIÇO</th><th>RESPONSÁVEL</th><th>MÃO DE OBRA</th><th>PEÇAS</th><th>TOTAL</th></tr></thead><tbody>{filteredFleetServiceOrders.map((order) => <tr key={order.id}><td>{formatDateTime(order.completedAt || order.createdAt)}</td><td><strong>{order.assetName}</strong><small>{order.location || "Localização não informada"}</small></td><td>{order.kind}<small>{order.description}</small></td><td>{order.ownerName || "Sem responsável"}</td><td>{formatCurrency(order.laborCost)}</td><td>{formatCurrency(order.partsCost)}</td><td><strong>{formatCurrency(order.laborCost + order.partsCost)}</strong></td></tr>)}</tbody></table></div> : <p className="fleet-audit-empty">Não há ordens concluídas para os filtros selecionados.</p>}
+                </section>
+                <div className="audit-footer"><span>Dados restritos aos ativos da organização.</span><span>O histórico completo de alterações permanece na aba Atividades do sistema.</span></div>
+              </div>}
             </section>
           )}
 

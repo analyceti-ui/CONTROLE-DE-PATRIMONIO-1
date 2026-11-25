@@ -69,6 +69,7 @@ Os endpoints de backup SQLite e a restauração local pelo painel foram desativa
 - **Ativos** — cadastro detalhado, responsável, unidade, ficha e QR Code.
 - **Preventivas**, **Ordens**, **Inspeções**, **Estoque**, **Compras** e **Relatórios**.
 - **Usuários**, **Auditoria** e configurações administrativas.
+- **Auditoria e frota** — além do histórico de ações, administradores podem filtrar abastecimentos por período, ativo, responsável e combustível; conferir gastos pagos, custos de ordens concluídas, localização, unidade, situação e responsáveis dos ativos; e exportar as listas em CSV. O relatório de combustível reflete os valores pagos registrados. Como litros ainda não são coletados, não calcula preço por litro nem consumo médio.
 - Administradores podem definir, por usuário e por tela, **Sem acesso**, **Somente visualizar** ou **Visualizar e editar**. Essas permissões são verificadas nas APIs, não apenas na navegação; usuários e auditoria e as configurações administrativas continuam restritos a administradores.
 - As APIs verificam a organização e, para usuários comuns, restringem dados aos ativos vinculados ao usuário.
 
