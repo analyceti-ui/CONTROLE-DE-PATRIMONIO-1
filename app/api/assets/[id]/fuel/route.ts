@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { readImageUploads } from "@/lib/asset-photos";
+import { isFuelType } from "@/lib/fuel";
 import { ApiError, getDatabase, getSessionUser, handleApiError, listRecords, nowIso, organizationScopedAsset, writeAssetHistory, writeAudit } from "@/lib/api";
 import { deleteImage, uploadImage } from "@/lib/cloudinary";
 
@@ -22,7 +23,8 @@ export async function GET(request: Request, context: RouteContext) {
     const result = records.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
       .slice(0, 500).map((record) => ({
         id: record.id, odometerKm: record.odometer_km, previousOdometerKm: record.previous_odometer_km,
-        distanceKm: record.distance_km, amount: record.amount, odometerPhotoType: record.odometer_photo_type,
+        distanceKm: record.distance_km, amount: record.amount, fuelType: record.fuel_type ?? "Não informado",
+        odometerPhotoType: record.odometer_photo_type,
         receiptPhotoType: record.receipt_photo_type, createdAt: record.created_at,
         userName: people.get(String(record.user_uid))?.display_name ?? "",
       }));
@@ -52,6 +54,8 @@ export async function POST(request: Request, context: RouteContext) {
     const form = await request.formData();
     const odometerKm = Number(form.get("odometerKm"));
     const amount = Number(String(form.get("amount") ?? "").replace(",", "."));
+    const fuelType = String(form.get("fuelType") ?? "");
+    if (!isFuelType(fuelType)) throw new ApiError(400, "Selecione um tipo de combustível válido.");
     if (!Number.isSafeInteger(odometerKm) || odometerKm < 0) throw new ApiError(400, "Informe uma quilometragem inteira válida.");
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) throw new ApiError(400, "Informe um valor de abastecimento maior que zero.");
     const odometerPhotos = await readImageUploads(form, "odometerPhoto");
@@ -86,7 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
       distanceKm = odometerKm - previousOdometerKm;
       transaction.create(db.collection("vehicle_fuel_records").doc(recordId), {
         asset_id: id, user_uid: user.uid, odometer_km: odometerKm, previous_odometer_km: previousOdometerKm,
-        distance_km: distanceKm, amount, odometer_photo_public_id: odo.public_id,
+        distance_km: distanceKm, amount, fuel_type: fuelType, odometer_photo_public_id: odo.public_id,
         odometer_photo_type: odometerPhotos[0].type, receipt_photo_public_id: receipt.public_id,
         receipt_photo_type: receiptPhotos[0].type, created_at: timestamp,
       });
@@ -98,10 +102,10 @@ export async function POST(request: Request, context: RouteContext) {
     });
     committed = true;
     await writeAssetHistory(id, user.uid, "vehicle.fueled", "Abastecimento e quilometragem registrados.", {
-      odometerKm, previousOdometerKm, distanceKm, amount,
+      odometerKm, previousOdometerKm, distanceKm, amount, fuelType,
     });
-    await writeAudit(user.organizationId, user.uid, "vehicle.fueled", "asset", id, { odometerKm, distanceKm, amount });
-    return NextResponse.json({ ok: true, odometerKm, previousOdometerKm, distanceKm }, { status: 201 });
+    await writeAudit(user.organizationId, user.uid, "vehicle.fueled", "asset", id, { odometerKm, distanceKm, amount, fuelType });
+    return NextResponse.json({ ok: true, odometerKm, previousOdometerKm, distanceKm, fuelType }, { status: 201 });
   } catch (error) {
     if (!committed) await Promise.all(uploaded.map((photo) => deleteImage(photo.public_id).catch(() => undefined)));
     return handleApiError(error);

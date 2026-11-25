@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { fuelTypes } from "@/lib/fuel";
 import type { UserRole } from "@/lib/api";
 
 type Asset = {
@@ -120,6 +121,7 @@ type VehicleFuelRecord = {
   previousOdometerKm: number;
   distanceKm: number;
   amount: number;
+  fuelType: string;
   odometerPhotoType: string;
   receiptPhotoType: string;
   createdAt: string;
@@ -304,10 +306,11 @@ export default function DashboardPage({ section }: { section: string }) {
   const [assetTransfers, setAssetTransfers] = useState<AssetTransfer[]>([]);
   const [fuelRecords, setFuelRecords] = useState<VehicleFuelRecord[]>([]);
   const [vehicleMaintenanceHistory, setVehicleMaintenanceHistory] = useState<VehicleMaintenanceRecord[]>([]);
-  const [fuelForm, setFuelForm] = useState({ odometerKm: "", amount: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
+  const [fuelForm, setFuelForm] = useState({ odometerKm: "", amount: "", fuelType: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
   const [fuelAssetId, setFuelAssetId] = useState("");
-  const [dedicatedFuelForm, setDedicatedFuelForm] = useState({ odometerKm: "", amount: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
+  const [dedicatedFuelForm, setDedicatedFuelForm] = useState({ odometerKm: "", amount: "", fuelType: "", odometerPhoto: null as File | null, receiptPhoto: null as File | null });
   const [dedicatedFuelRecords, setDedicatedFuelRecords] = useState<VehicleFuelRecord[]>([]);
+  const [fuelTypeFilter, setFuelTypeFilter] = useState("all");
   const [savingFuel, setSavingFuel] = useState(false);
   const [loadingAssetDetails, setLoadingAssetDetails] = useState(false);
   const [equipmentPhotoFiles, setEquipmentPhotoFiles] = useState<File[]>([]);
@@ -339,7 +342,6 @@ export default function DashboardPage({ section }: { section: string }) {
     name: "",
     email: "",
     password: "",
-    role: "user" as UserRole,
   });
   const [form, setForm] = useState({
     name: "",
@@ -683,6 +685,7 @@ export default function DashboardPage({ section }: { section: string }) {
     const body = new FormData();
     body.set("odometerKm", fuelForm.odometerKm);
     body.set("amount", fuelForm.amount);
+    body.set("fuelType", fuelForm.fuelType);
     body.set("odometerPhoto", fuelForm.odometerPhoto);
     body.set("receiptPhoto", fuelForm.receiptPhoto);
     try {
@@ -692,6 +695,7 @@ export default function DashboardPage({ section }: { section: string }) {
       setFuelForm({
         odometerKm: String(result.odometerKm),
         amount: "",
+        fuelType: "",
         odometerPhoto: null,
         receiptPhoto: null,
       });
@@ -725,13 +729,14 @@ export default function DashboardPage({ section }: { section: string }) {
     const body = new FormData();
     body.set("odometerKm", dedicatedFuelForm.odometerKm);
     body.set("amount", dedicatedFuelForm.amount);
+    body.set("fuelType", dedicatedFuelForm.fuelType);
     body.set("odometerPhoto", dedicatedFuelForm.odometerPhoto);
     body.set("receiptPhoto", dedicatedFuelForm.receiptPhoto);
     try {
       const result = await responseData<{ odometerKm: number; previousOdometerKm: number; distanceKm: number }>(
         await api(`/api/assets/${asset.id}/fuel`, { method: "POST", body }),
       );
-      setDedicatedFuelForm({ odometerKm: String(result.odometerKm), amount: "", odometerPhoto: null, receiptPhoto: null });
+      setDedicatedFuelForm({ odometerKm: String(result.odometerKm), amount: "", fuelType: "", odometerPhoto: null, receiptPhoto: null });
       const history = await responseData<{ records: VehicleFuelRecord[] }>(await api(`/api/assets/${asset.id}/fuel`));
       setDedicatedFuelRecords(history.records);
       await loadData();
@@ -809,7 +814,7 @@ export default function DashboardPage({ section }: { section: string }) {
       setAssetTransfers([]);
       setFuelRecords([]);
       setVehicleMaintenanceHistory([]);
-      setFuelForm({ odometerKm: "", amount: "", odometerPhoto: null, receiptPhoto: null });
+      setFuelForm({ odometerKm: "", amount: "", fuelType: "", odometerPhoto: null, receiptPhoto: null });
       setEquipmentPhotoFiles([]);
       setEquipmentPhotoCaption("");
       return;
@@ -822,6 +827,7 @@ export default function DashboardPage({ section }: { section: string }) {
       setFuelForm({
         odometerKm: String(selectedQrAssetVehicleKm ?? ""),
         amount: "",
+        fuelType: "",
         odometerPhoto: null,
         receiptPhoto: null,
       });
@@ -906,6 +912,20 @@ export default function DashboardPage({ section }: { section: string }) {
     const usable = !["baixado", "descartado"].includes(status);
     return usable && (eligibleCategory || eligibleName);
   }), [assets]);
+  const fuelSpendingByType = useMemo(() => {
+    const spending = new Map<string, { amount: number; count: number }>();
+    for (const record of dedicatedFuelRecords) {
+      const current = spending.get(record.fuelType) ?? { amount: 0, count: 0 };
+      spending.set(record.fuelType, { amount: current.amount + record.amount, count: current.count + 1 });
+    }
+    return [...spending.entries()]
+      .map(([fuelType, totals]) => ({ fuelType, ...totals }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [dedicatedFuelRecords]);
+  const filteredDedicatedFuelRecords = useMemo(
+    () => fuelTypeFilter === "all" ? dedicatedFuelRecords : dedicatedFuelRecords.filter((record) => record.fuelType === fuelTypeFilter),
+    [dedicatedFuelRecords, fuelTypeFilter],
+  );
 
   const preventiveNotifications = notificationAlerts.filter((alert) => alert.kind !== "warranty");
   const preventiveAlertCount = preventiveNotifications.length;
@@ -1222,7 +1242,7 @@ export default function DashboardPage({ section }: { section: string }) {
         method: "POST",
         body: JSON.stringify(newUser),
       }));
-      setNewUser({ name: "", email: "", password: "", role: "user" });
+      setNewUser({ name: "", email: "", password: "" });
       setRecordFormOpen((previous) => ({ ...previous, users: false }));
       setNotice("Acesso criado. Compartilhe o e-mail e a senha inicial com o usuário.");
       await loadData();
@@ -1394,13 +1414,18 @@ export default function DashboardPage({ section }: { section: string }) {
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError("");
+    setNotice("");
     try {
       await responseData(await api("/api/users", {
         method: "PATCH",
         body: JSON.stringify(passwordForm),
       }));
       setPasswordForm({ currentPassword: "", newPassword: "" });
-      await logout();
+      window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
+      setProfile((current) => current ? { ...current, mustChangePassword: false } : current);
+      setNotice("Senha alterada com sucesso.");
+      await loadData();
     } catch (passwordError) {
       setError(passwordError instanceof Error ? passwordError.message : "Não foi possível alterar a senha.");
     }
@@ -1662,16 +1687,20 @@ export default function DashboardPage({ section }: { section: string }) {
           {section === "fuel" && <section className="panel" id="abastecimento">
             <div className="panel-heading"><div><span className="eyebrow">COMBUSTÍVEL E QUILOMETRAGEM</span><h2>Abastecimento</h2><p>Registre o hodômetro, o valor pago e os comprovantes dos veículos autorizados.</p></div></div>
             {fuelAssets.length ? <div className="fuel-page-grid">
-              <aside className="fuel-asset-list"><strong>Selecionar equipamento</strong>{fuelAssets.map((asset) => <button type="button" key={asset.id} className={`fuel-asset-option ${fuelAssetId === asset.id ? "active" : ""}`} onClick={() => { setFuelAssetId(asset.id); const odometer = asset.vehicleKm ?? 0; setDedicatedFuelForm((current) => ({ ...current, odometerKm: String(odometer) })); }}><span>{asset.category}</span><strong>{asset.name}</strong><small>{asset.vehicleKm === null ? "Sem hodômetro" : `${asset.vehicleKm.toLocaleString("pt-BR")} km`}</small></button>)}</aside>
+              <aside className="fuel-asset-list"><strong>Selecionar equipamento</strong>{fuelAssets.map((asset) => <button type="button" key={asset.id} className={`fuel-asset-option ${fuelAssetId === asset.id ? "active" : ""}`} onClick={() => { setFuelAssetId(asset.id); setFuelTypeFilter("all"); const odometer = asset.vehicleKm ?? 0; setDedicatedFuelForm((current) => ({ ...current, odometerKm: String(odometer), fuelType: "" })); }}><span>{asset.category}</span><strong>{asset.name}</strong><small>{asset.vehicleKm === null ? "Sem hodômetro" : `${asset.vehicleKm.toLocaleString("pt-BR")} km`}</small></button>)}</aside>
               {fuelAssetId ? <div className="fuel-workspace">
                 {(() => { const asset = fuelAssets.find((item) => item.id === fuelAssetId); if (!asset) return null; return <><div className="fuel-selected-heading"><span>{asset.category}</span><h3>{asset.name}</h3><small>{asset.location || "Localização não informada"}</small></div><form className="fuel-record-form" onSubmit={submitDedicatedFuelRecord}>
                   <strong>Novo abastecimento</strong><div className="fuel-record-fields">
                     <label>Quilometragem atual (km)<input required type="number" min={asset.vehicleKm ?? 0} step="1" value={dedicatedFuelForm.odometerKm} onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, odometerKm: event.target.value })} /></label>
                     <label>Valor pago (R$)<input required type="number" min="0.01" max="1000000" step="0.01" value={dedicatedFuelForm.amount} onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, amount: event.target.value })} /></label>
+                    <label>Tipo de combustível<select required value={dedicatedFuelForm.fuelType} onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, fuelType: event.target.value })}><option value="">Selecione</option>{fuelTypes.map((fuelType) => <option key={fuelType} value={fuelType}>{fuelType}</option>)}</select></label>
                     <label>Foto do hodômetro<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, odometerPhoto: event.target.files?.[0] ?? null })} /><small>{dedicatedFuelForm.odometerPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
                     <label>Foto do cupom<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setDedicatedFuelForm({ ...dedicatedFuelForm, receiptPhoto: event.target.files?.[0] ?? null })} /><small>{dedicatedFuelForm.receiptPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
-                  </div><button className="button button-primary compact-button" type="submit" disabled={savingFuel || !dedicatedFuelForm.odometerKm || !dedicatedFuelForm.amount || !dedicatedFuelForm.odometerPhoto || !dedicatedFuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
-                </form><div className="vehicle-history-block"><h4>Histórico de abastecimentos</h4>{dedicatedFuelRecords.length ? <div className="table-scroll"><table><thead><tr><th>DATA</th><th>HODÔMETRO</th><th>RODADO</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead><tbody>{dedicatedFuelRecords.map((record) => <tr key={record.id}><td>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(record.createdAt))}<small className="table-subtext">{record.userName}</small></td><td>{record.odometerKm.toLocaleString("pt-BR")} km</td><td>{record.distanceKm.toLocaleString("pt-BR")} km</td><td>R$ {record.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td><td><div className="inline-actions"><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/odometer`} target="_blank" rel="noreferrer">Hodômetro</a><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/receipt`} target="_blank" rel="noreferrer">Cupom</a></div></td></tr>)}</tbody></table></div> : <p className="form-help">Ainda não há abastecimentos registrados.</p>}</div></>; })()}
+                  </div><button className="button button-primary compact-button" type="submit" disabled={savingFuel || !dedicatedFuelForm.odometerKm || !dedicatedFuelForm.amount || !dedicatedFuelForm.fuelType || !dedicatedFuelForm.odometerPhoto || !dedicatedFuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
+                </form><div className="vehicle-history-block fuel-spending-block">
+                  <div className="fuel-spending-heading"><div><h4>Gastos por combustível</h4><small>Totais pagos neste equipamento, do maior para o menor.</small></div><label>Filtrar histórico<select aria-label="Filtrar histórico por combustível" value={fuelTypeFilter} onChange={(event) => setFuelTypeFilter(event.target.value)}><option value="all">Todos os combustíveis</option>{fuelSpendingByType.map((item) => <option key={item.fuelType} value={item.fuelType}>{item.fuelType}</option>)}</select></label></div>
+                  {fuelSpendingByType.length ? <div className="fuel-spending-grid">{fuelSpendingByType.map((item) => <article key={item.fuelType}><span>{item.fuelType}</span><strong>R$ {item.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong><small>{item.count} abastecimento(s)</small></article>)}</div> : <p className="form-help">Os gastos por combustível aparecerão após os primeiros registros.</p>}
+                </div><div className="vehicle-history-block"><h4>Histórico de abastecimentos</h4>{filteredDedicatedFuelRecords.length ? <div className="table-scroll"><table><thead><tr><th>DATA</th><th>COMBUSTÍVEL</th><th>HODÔMETRO</th><th>RODADO</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead><tbody>{filteredDedicatedFuelRecords.map((record) => <tr key={record.id}><td>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(record.createdAt))}<small className="table-subtext">{record.userName}</small></td><td>{record.fuelType}</td><td>{record.odometerKm.toLocaleString("pt-BR")} km</td><td>{record.distanceKm.toLocaleString("pt-BR")} km</td><td>R$ {record.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td><td><div className="inline-actions"><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/odometer`} target="_blank" rel="noreferrer">Hodômetro</a><a className="text-link" href={`/api/assets/${asset.id}/fuel/${record.id}/receipt`} target="_blank" rel="noreferrer">Cupom</a></div></td></tr>)}</tbody></table></div> : <p className="form-help">{dedicatedFuelRecords.length ? "Nenhum abastecimento corresponde ao filtro selecionado." : "Ainda não há abastecimentos registrados."}</p>}</div></>; })()}
               </div> : <div className="empty-panel">Selecione um veículo, carro, ônibus, caminhão, trator ou gerador para registrar o abastecimento.</div>}
             </div> : <p className="empty-panel">Nenhum veículo, carro, ônibus, caminhão, trator ou gerador está vinculado à sua conta.</p>}
           </section>}
@@ -2080,7 +2109,7 @@ export default function DashboardPage({ section }: { section: string }) {
                 <label>Nome<input required maxLength={100} value={newUser.name} onChange={(event) => setNewUser({ ...newUser, name: event.target.value })} placeholder="Nome da pessoa" /></label>
                 <label>E-mail<input required type="email" maxLength={254} value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} placeholder="pessoa@empresa.com.br" /></label>
                 <label>Senha inicial<input required type="password" minLength={8} maxLength={128} autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} placeholder="Mínimo de 8 caracteres" /></label>
-                <label>Perfil<select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value as UserRole })}><option value="user">Usuário</option><option value="admin">Administrador</option></select></label>
+                <p className="form-help wide-field">A nova conta começa como Usuário. Se necessário, altere o perfil na lista após o cadastro.</p>
                 <button className="button button-primary add-button" type="submit" disabled={creatingUser}>{creatingUser ? "Criando..." : "+ Criar acesso"}</button>
               </form>}
               {recordViews.users === "list" ? <div className="table-scroll">
@@ -2261,18 +2290,20 @@ export default function DashboardPage({ section }: { section: string }) {
                     <div className="fuel-record-fields">
                       <label>Quilometragem atual (km)<input required type="number" min={selectedQrAsset.vehicleKm ?? 0} step="1" value={fuelForm.odometerKm} onChange={(event) => setFuelForm({ ...fuelForm, odometerKm: event.target.value })} /></label>
                       <label>Valor pago (R$)<input required type="number" min="0.01" max="1000000" step="0.01" value={fuelForm.amount} onChange={(event) => setFuelForm({ ...fuelForm, amount: event.target.value })} /></label>
+                      <label>Tipo de combustível<select required value={fuelForm.fuelType} onChange={(event) => setFuelForm({ ...fuelForm, fuelType: event.target.value })}><option value="">Selecione</option>{fuelTypes.map((fuelType) => <option key={fuelType} value={fuelType}>{fuelType}</option>)}</select></label>
                       <label>Foto do hodômetro<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFuelForm({ ...fuelForm, odometerPhoto: event.target.files?.[0] ?? null })} /><small>{fuelForm.odometerPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
                       <label>Foto do cupom<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFuelForm({ ...fuelForm, receiptPhoto: event.target.files?.[0] ?? null })} /><small>{fuelForm.receiptPhoto?.name ?? "Obrigatória · JPG, PNG ou WebP"}</small></label>
                     </div>
-                    <button className="button button-primary compact-button" type="submit" disabled={savingFuel || !fuelForm.odometerKm || !fuelForm.amount || !fuelForm.odometerPhoto || !fuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
+                    <button className="button button-primary compact-button" type="submit" disabled={savingFuel || !fuelForm.odometerKm || !fuelForm.amount || !fuelForm.fuelType || !fuelForm.odometerPhoto || !fuelForm.receiptPhoto}>{savingFuel ? "Salvando..." : "Salvar abastecimento"}</button>
                     <small className="form-help">Anexe exatamente uma foto do hodômetro e uma do cupom. As duas devem somar até 3,5 MB.</small>
                   </form>
                   <div className="vehicle-history-block">
                     <h4>Histórico de abastecimentos</h4>
                     {fuelRecords.length ? <div className="table-scroll"><table>
-                      <thead><tr><th>DATA</th><th>HODÔMETRO</th><th>RODADO DESDE O REGISTRO ANTERIOR</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead>
+                      <thead><tr><th>DATA</th><th>COMBUSTÍVEL</th><th>HODÔMETRO</th><th>RODADO DESDE O REGISTRO ANTERIOR</th><th>VALOR</th><th>COMPROVANTES</th></tr></thead>
                       <tbody>{fuelRecords.map((record) => <tr key={record.id}>
                         <td>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(record.createdAt))}<small className="table-subtext">{record.userName}</small></td>
+                        <td>{record.fuelType}</td>
                         <td>{record.odometerKm.toLocaleString("pt-BR")} km</td>
                         <td>{record.distanceKm.toLocaleString("pt-BR")} km</td>
                         <td>R$ {record.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>

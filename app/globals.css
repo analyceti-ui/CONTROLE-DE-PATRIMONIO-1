@@ -593,7 +593,7 @@ td { padding: 11px 14px; border-top: 1px solid #eff2f0; color: #65716b; font-siz
 .fuel-record-form > strong { color: #34413b; font: 700 12px Manrope, sans-serif; }
 .fuel-record-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
 .fuel-record-fields label { min-width: 0; display: grid; gap: 6px; color: #495651; font-size: 10px; font-weight: 600; }
-.fuel-record-fields input { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid #dfe5e1; border-radius: 5px; background: white; color: var(--ink); font-size: 10px; }
+.fuel-record-fields input, .fuel-record-fields select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid #dfe5e1; border-radius: 5px; background: white; color: var(--ink); font-size: 10px; }
 .fuel-record-fields input[type="file"] { padding: 6px; }
 .fuel-record-fields small { overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .fuel-record-form > .button { justify-self: start; }
@@ -601,6 +601,19 @@ td { padding: 11px 14px; border-top: 1px solid #eff2f0; color: #65716b; font-siz
 .vehicle-history-block h4 { margin: 0 0 8px; color: #34413b; font: 700 11px Manrope, sans-serif; }
 .vehicle-history-block .table-scroll { border: 1px solid var(--line); border-radius: 5px; }
 .vehicle-history-block td { white-space: nowrap; }
+.fuel-spending-heading { margin-bottom: 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.fuel-spending-heading h4 { margin-bottom: 3px; }
+.fuel-spending-heading small { color: var(--muted); font-size: 9px; }
+.fuel-spending-heading label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+.fuel-spending-heading select { min-height: 32px; max-width: 220px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font-size: 10px; }
+.fuel-spending-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; }
+.fuel-spending-grid article { min-width: 0; padding: 10px; display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--canvas); }
+.fuel-spending-grid span { color: var(--muted); font-size: 9px; }
+.fuel-spending-grid strong { color: var(--green-dark); font: 700 14px Manrope, sans-serif; overflow-wrap: anywhere; }
+.fuel-spending-grid small { color: var(--muted); font-size: 9px; }
+.dashboard-page[data-theme="dark"] .fuel-record-fields input,
+.dashboard-page[data-theme="dark"] .fuel-record-fields select { border-color: #405248; background: #17211c; color: var(--ink); }
+.dashboard-page[data-theme="dark"] .fuel-spending-grid article { background: #202b25; }
 .scanner-modal { width: min(100%, 520px); }
 .qr-camera { width: 100%; max-height: 55vh; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: #17241d; }
 .order-fields { min-width: 430px; display: flex; align-items: flex-end; gap: 6px; }

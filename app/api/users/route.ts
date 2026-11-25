@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ApiError, createId, createUserRecord, deleteRecords, getDatabase, getRecord, getSessionUser, handleApiError, hashPassword, readJson, requireAdmin, verifyPassword, writeAudit } from "@/lib/api";
+import { ApiError, createId, createUserRecord, getDatabase, getRecord, getSessionToken, getSessionUser, handleApiError, hashPassword, readJson, requireAdmin, verifyPassword, writeAudit } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -11,11 +12,10 @@ export async function POST(request: Request) {
     const displayName = typeof body.name === "string" ? body.name.trim() : "";
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
-    const role = body.role === "admin" || body.role === "user" ? body.role : "";
+    const role = "user";
     if (!displayName || displayName.length > 100) throw new ApiError(400, "Informe o nome do usuário (até 100 caracteres).");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new ApiError(400, "Informe um e-mail válido.");
     if (password.length < 8 || password.length > 128) throw new ApiError(400, "A senha inicial deve ter entre 8 e 128 caracteres.");
-    if (!role) throw new ApiError(400, "Selecione um perfil válido.");
     const uid = createId();
     await createUserRecord(uid, email, {
       email, display_name: displayName, password_hash: hashPassword(password), role,
@@ -40,14 +40,18 @@ export async function PATCH(request: Request) {
     if (!account || !verifyPassword(currentPassword, String(account.password_hash))) {
       throw new ApiError(400, "A senha atual está incorreta.");
     }
-    await getDatabase().collection("users").doc(user.uid).update({
+    const db = getDatabase();
+    await db.collection("users").doc(user.uid).update({
       password_hash: hashPassword(newPassword), must_change_password: false, updated_at: new Date().toISOString(),
     });
-    await deleteRecords("sessions", "user_uid", user.uid);
+    const sessionToken = getSessionToken(request);
+    const currentSessionId = createHash("sha256").update(sessionToken).digest("hex");
+    const sessions = await db.collection("sessions").where("user_uid", "==", user.uid).get();
+    await Promise.all(sessions.docs
+      .filter((session) => session.id !== currentSessionId)
+      .map((session) => session.ref.delete()));
     await writeAudit(user.organizationId, user.uid, "user.password_changed", "user", user.uid);
-    const response = NextResponse.json({ ok: true });
-    response.headers.set("Set-Cookie", "patrimonio_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
-    return response;
+    return NextResponse.json({ ok: true });
   } catch (error) {
     return handleApiError(error);
   }
