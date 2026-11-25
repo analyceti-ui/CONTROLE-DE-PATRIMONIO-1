@@ -225,6 +225,18 @@ export function handleApiError(error: unknown) {
   if (error instanceof ApiError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
+  if (error && typeof error === "object") {
+    const firebaseError = error as { code?: unknown; message?: unknown };
+    const code = String(firebaseError.code ?? "").toUpperCase();
+    const message = typeof firebaseError.message === "string" ? firebaseError.message : "";
+    if (code === "8" || code === "RESOURCE_EXHAUSTED" || /RESOURCE_EXHAUSTED|QUOTA EXCEEDED/i.test(message)) {
+      console.error("Cota do Firebase/Firestore excedida:", error);
+      return NextResponse.json(
+        { error: "A cota do Firebase/Firestore foi atingida. Os dados não puderam ser atualizados. Aguarde a renovação da cota ou verifique o uso e o plano do projeto Firebase." },
+        { status: 503 },
+      );
+    }
+  }
   console.error("Erro inesperado na API:", error);
   return NextResponse.json({ error: "Não foi possível concluir a operação." }, { status: 500 });
 }
